@@ -154,6 +154,89 @@ def test_normalize_league_pairs_opponents_by_matchup_id_not_list_order(monkeypat
     assert by_id["4"]["roster_json"] == []
 
 
+def test_normalize_league_does_not_pair_bye_week_rosters(monkeypatch):
+    """Sleeper returns a row for every roster every week, with `matchup_id: null`
+    for rosters not scheduled that week (playoff byes, consolation gaps, odd team
+    counts). Those rows must not be grouped together into a fabricated game."""
+    league_id = "333"
+    base = sleeper.SLEEPER_BASE_URL
+    responses = {
+        f"{base}/league/{league_id}": FakeResponse(
+            {"name": "Playoff League", "season": "2026", "settings": {"leg": 15}}
+        ),
+        f"{base}/league/{league_id}/rosters": FakeResponse(
+            [
+                {"roster_id": 1, "owner_id": "u1", "players": []},
+                {"roster_id": 2, "owner_id": "u2", "players": []},
+                {"roster_id": 3, "owner_id": "u3", "players": []},
+                {"roster_id": 4, "owner_id": "u4", "players": []},
+            ]
+        ),
+        f"{base}/league/{league_id}/users": FakeResponse(
+            [
+                {"user_id": "u1", "display_name": "Bye One", "metadata": {}},
+                {"user_id": "u2", "display_name": "Bye Two", "metadata": {}},
+                {"user_id": "u3", "display_name": "Three", "metadata": {}},
+                {"user_id": "u4", "display_name": "Four", "metadata": {}},
+            ]
+        ),
+        # Rosters 1 and 2 are both on byes; only 3 vs 4 is a real game.
+        f"{base}/league/{league_id}/matchups/15": FakeResponse(
+            [
+                {"roster_id": 1, "matchup_id": None, "points": 12.5},
+                {"roster_id": 2, "matchup_id": None, "points": 33.3},
+                {"roster_id": 3, "matchup_id": 5, "points": 88.0},
+                {"roster_id": 4, "matchup_id": 5, "points": 77.0},
+            ]
+        ),
+    }
+    monkeypatch.setattr(httpx, "get", _fake_get_from(responses))
+
+    result = sleeper.normalize_league(league_id, my_user_id="u1", players_map={})
+    by_id = {t["platform_team_id"]: t for t in result["teams"]}
+
+    # Neither bye roster may be shown as playing the other (or anyone).
+    for bye_id, pts in (("1", 12.5), ("2", 33.3)):
+        assert by_id[bye_id]["opponent_name"] is None
+        assert by_id[bye_id]["opponent_points"] is None
+        assert by_id[bye_id]["points_for"] == pts
+
+    # The real game is unaffected.
+    assert by_id["3"]["opponent_name"] == "Four"
+    assert by_id["3"]["opponent_points"] == 77.0
+    assert by_id["4"]["opponent_name"] == "Three"
+    assert by_id["4"]["opponent_points"] == 88.0
+
+
+def test_normalize_league_handles_singleton_matchup_group(monkeypatch):
+    """A matchup group with only one roster in it (odd team count) has no
+    opponent to pair against."""
+    league_id = "222"
+    base = sleeper.SLEEPER_BASE_URL
+    responses = {
+        f"{base}/league/{league_id}": FakeResponse(
+            {"name": "Odd League", "season": "2026", "settings": {"leg": 4}}
+        ),
+        f"{base}/league/{league_id}/rosters": FakeResponse(
+            [{"roster_id": 9, "owner_id": "u9", "players": []}]
+        ),
+        f"{base}/league/{league_id}/users": FakeResponse(
+            [{"user_id": "u9", "display_name": "Lonely", "metadata": {}}]
+        ),
+        f"{base}/league/{league_id}/matchups/4": FakeResponse(
+            [{"roster_id": 9, "matchup_id": 3, "points": 55.0}]
+        ),
+    }
+    monkeypatch.setattr(httpx, "get", _fake_get_from(responses))
+
+    result = sleeper.normalize_league(league_id, my_user_id="u9", players_map={})
+    (team,) = result["teams"]
+    assert team["name"] == "Lonely"
+    assert team["points_for"] == 55.0  # own points still reported
+    assert team["opponent_name"] is None
+    assert team["opponent_points"] is None
+
+
 def test_normalize_league_handles_null_metadata_on_users(monkeypatch):
     """Sleeper sends `metadata: null` for members who never set a team name.
     A dict .get default does not cover that, so both the team's own name and the

@@ -89,8 +89,14 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
 
     users_by_id = {u["user_id"]: u for u in users}
     matchups_by_roster_id = {m["roster_id"]: m for m in matchups}
+    # Sleeper returns a row for every roster every week, using matchup_id: null for
+    # rosters with no game that week (playoff byes, consolation gaps, odd team counts).
+    # Those must not be indexed, or they would all collapse under a single None key and
+    # be read back as one shared matchup -- pairing bye rosters into games nobody played.
     matchups_by_matchup_id: dict[int, list[dict]] = {}
     for m in matchups:
+        if m.get("matchup_id") is None:
+            continue
         matchups_by_matchup_id.setdefault(m["matchup_id"], []).append(m)
 
     teams = []
@@ -105,7 +111,9 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
         opponent_points = None
         my_points = my_matchup["points"] if my_matchup else 0.0
 
-        if my_matchup:
+        # A null matchup_id means "no game this week" -- same result as having no row
+        # at all: own points are still reported, but there is no opponent.
+        if my_matchup and my_matchup.get("matchup_id") is not None:
             group = matchups_by_matchup_id.get(my_matchup["matchup_id"], [])
             opponent = next((m for m in group if m["roster_id"] != roster["roster_id"]), None)
             if opponent:
