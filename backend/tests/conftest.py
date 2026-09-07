@@ -2,6 +2,9 @@ import pytest
 from cryptography.fernet import Fernet
 from passlib.context import CryptContext
 
+from app.config import get_settings
+from app.db import get_engine
+
 TEST_PASSWORD = "testpassword123"
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -14,6 +17,8 @@ def test_env(tmp_path, monkeypatch):
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("ENABLE_SCHEDULER", "false")
+    get_settings.cache_clear()
+    get_engine.cache_clear()
     yield
 
 
