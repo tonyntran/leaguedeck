@@ -154,6 +154,43 @@ def test_normalize_league_pairs_opponents_by_matchup_id_not_list_order(monkeypat
     assert by_id["4"]["roster_json"] == []
 
 
+def test_normalize_league_handles_null_metadata_on_users(monkeypatch):
+    """Sleeper sends `metadata: null` for members who never set a team name.
+    A dict .get default does not cover that, so both the team's own name and the
+    opponent's name must coalesce it."""
+    league_id = "444"
+    base = sleeper.SLEEPER_BASE_URL
+    responses = {
+        f"{base}/league/{league_id}": FakeResponse(
+            {"name": "Null League", "season": "2026", "settings": {"leg": 3}}
+        ),
+        f"{base}/league/{league_id}/rosters": FakeResponse(
+            [
+                {"roster_id": 1, "owner_id": "u1", "players": []},
+                {"roster_id": 2, "owner_id": "u2", "players": []},
+            ]
+        ),
+        f"{base}/league/{league_id}/users": FakeResponse(
+            [
+                {"user_id": "u1", "display_name": "Me", "metadata": None},
+                {"user_id": "u2", "display_name": "Rival", "metadata": None},
+            ]
+        ),
+        f"{base}/league/{league_id}/matchups/3": FakeResponse(
+            [
+                {"roster_id": 1, "matchup_id": 1, "points": 1.0},
+                {"roster_id": 2, "matchup_id": 1, "points": 2.0},
+            ]
+        ),
+    }
+    monkeypatch.setattr(httpx, "get", _fake_get_from(responses))
+
+    result = sleeper.normalize_league(league_id, my_user_id="u1", players_map={})
+    my_team = next(t for t in result["teams"] if t["is_mine"])
+    assert my_team["name"] == "Me"
+    assert my_team["opponent_name"] == "Rival"
+
+
 def test_normalize_league_handles_week_with_no_matchups(monkeypatch):
     """Sleeper returns an empty matchups list outside the regular season."""
     league_id = "555"

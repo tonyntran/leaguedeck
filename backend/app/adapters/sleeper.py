@@ -71,6 +71,14 @@ def _get_matchups(league_id: str, week: int) -> list[dict]:
     return resp.json()
 
 
+def _team_name_of(owner: dict) -> str | None:
+    """Preferred display name for a league member: their custom team name if set,
+    else their Sleeper display name. Sleeper sends `metadata: null` (not an absent
+    key) for members who never customized, so the null must be coalesced here."""
+    metadata = owner.get("metadata") or {}
+    return metadata.get("team_name") or owner.get("display_name")
+
+
 def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict:
     """Fetch everything for one Sleeper league and normalize into LeagueDeck's shape."""
     league_data = _get_league(league_id)
@@ -89,9 +97,7 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
     for roster in rosters:
         owner = users_by_id.get(roster["owner_id"], {})
         team_name = (
-            owner.get("metadata", {}).get("team_name")
-            or owner.get("display_name")
-            or f"Roster {roster['roster_id']}"
+            _team_name_of(owner) or f"Roster {roster['roster_id']}"
         )
 
         my_matchup = matchups_by_roster_id.get(roster["roster_id"])
@@ -108,9 +114,7 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
                 )
                 if opp_roster:
                     opp_owner = users_by_id.get(opp_roster["owner_id"], {})
-                    opponent_name = opp_owner.get("metadata", {}).get(
-                        "team_name"
-                    ) or opp_owner.get("display_name")
+                    opponent_name = _team_name_of(opp_owner)
                 opponent_points = opponent["points"]
 
         roster_players = [
