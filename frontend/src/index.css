@@ -1,2 +1,244 @@
 @import "tailwindcss";
 @plugin "daisyui";
+
+:root {
+  --ld-paper: #ede3ce; /* interior page background */
+  --ld-ink: #241f18; /* primary text */
+  --ld-muted: #6e6350; /* secondary text */
+  --ld-accent: #c9a24b; /* gold — rules, taglines */
+  --ld-win: #8b3a3a; /* crimson — your score, positive state */
+  --ld-lose: #3c5670; /* steel — opponent score */
+  --ld-rule: #d9cba8; /* hairlines, dotted leaders */
+  --ld-cover: #2f4b3c; /* forest-green cover band */
+  --ld-cover-ink: #f2ead2; /* text on the green cover */
+  --ld-font: Georgia, "Iowan Old Style", "Times New Roman", serif;
+}
+
+body,
+input,
+button {
+  font-family: var(--ld-font);
+}
+
+.ld-page {
+  background: var(--ld-paper);
+  color: var(--ld-ink);
+  min-height: 100vh;
+}
+
+/* Cover band: used as the masthead on Dashboard and Settings pages */
+.ld-cover-band {
+  background: var(--ld-cover);
+  color: var(--ld-cover-ink);
+  text-align: center;
+  padding: 1.5rem 1.7rem 1.3rem;
+}
+.ld-cover-band .ld-title {
+  font-size: 1.3rem;
+  letter-spacing: 0.01em;
+}
+.ld-cover-band .ld-sub {
+  font-style: italic;
+  color: var(--ld-accent);
+  font-size: 0.8rem;
+  margin-top: 0.2rem;
+}
+
+/* Login screen: centered card on a split background — green cover on top ~34%, beige below */
+.ld-login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.4rem 1.5rem;
+  background: linear-gradient(var(--ld-cover) 0 34%, var(--ld-paper) 34%);
+}
+.ld-login-card {
+  width: 100%;
+  max-width: 320px;
+  text-align: center;
+  padding-top: 2.2rem;
+}
+.ld-wordmark {
+  font-size: 1.6rem;
+  letter-spacing: 0.01em;
+  margin-bottom: 0.2rem;
+  color: var(--ld-cover-ink);
+}
+.ld-tagline {
+  font-style: italic;
+  color: var(--ld-cover-ink);
+  opacity: 0.8;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+/* Underline-style inputs, everywhere */
+.ld-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--ld-ink);
+  color: var(--ld-ink);
+  padding: 0.5rem 0.2rem;
+  font-size: 1rem;
+  font-family: inherit;
+  margin-bottom: 1.2rem;
+}
+.ld-login-card .ld-input {
+  border-bottom-color: var(--ld-ink);
+  margin-top: 1.6rem;
+  text-align: center;
+}
+.ld-input:focus-visible {
+  outline: none;
+  border-bottom: 2px solid var(--ld-accent);
+}
+
+.ld-button {
+  background: var(--ld-ink);
+  color: var(--ld-paper);
+  border: none;
+  padding: 0.6rem 1.6rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+/* Section headers (e.g. one per league on the dashboard) */
+.ld-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 1.2rem 0 0.6rem;
+}
+.ld-section-head .ld-name {
+  font-size: 1.05rem;
+}
+.ld-section-head hr {
+  flex: 1;
+  border: none;
+  border-top: 1px solid var(--ld-accent);
+  margin: 0;
+}
+.ld-section-head .ld-wk {
+  color: var(--ld-muted);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+/* Dot-leader rows: score lines and roster lines */
+.ld-dotline {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.92rem;
+  padding: 0.28rem 0;
+}
+.ld-dotline .ld-lbl {
+  white-space: nowrap;
+}
+.ld-dotline .ld-dots {
+  flex: 1;
+  border-bottom: 1px dotted var(--ld-rule);
+  transform: translateY(-0.3rem);
+}
+.ld-dotline .ld-val {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-weight: bold;
+}
+.ld-dotline.ld-you .ld-val {
+  color: var(--ld-win);
+}
+.ld-dotline.ld-riv .ld-val {
+  color: var(--ld-lose);
+}
+.ld-roster {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--ld-rule);
+  padding-top: 0.5rem;
+}
+.ld-roster .ld-dotline .ld-pos {
+  color: var(--ld-muted);
+  font-size: 0.72rem;
+  font-style: italic;
+  margin-right: 0.15rem;
+}
+.ld-roster .ld-dotline.ld-out .ld-lbl {
+  color: var(--ld-win);
+}
+
+/* Nav bar: quiet, unobtrusive since each page carries its own masthead */
+.ld-nav {
+  background: var(--ld-paper);
+  border-bottom: 1px solid var(--ld-rule);
+  padding: 0.5rem 1rem;
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+.ld-nav a {
+  color: var(--ld-muted);
+  text-decoration: none;
+}
+.ld-nav a:hover,
+.ld-nav a.active {
+  color: var(--ld-ink);
+  border-bottom: 1px solid var(--ld-accent);
+}
+
+/* Degraded-sync warning banner */
+.ld-alert {
+  background: var(--ld-paper);
+  border-left: 3px solid var(--ld-win);
+  color: var(--ld-win);
+  padding: 0.5rem 0.8rem;
+  margin: 0 1.7rem 0.6rem;
+  font-size: 0.82rem;
+}
+
+/* Plain status text (loading/error states) */
+.ld-status {
+  padding: 1.5rem 1.7rem;
+  color: var(--ld-muted);
+}
+
+.ld-leagues {
+  padding: 0 1.7rem 2rem;
+}
+
+.ld-settings-form {
+  padding: 1.5rem 1.7rem;
+  max-width: 420px;
+}
+.ld-settings-form label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--ld-muted);
+  margin-bottom: 0.2rem;
+}
+.ld-saved {
+  color: var(--ld-win);
+  font-size: 0.85rem;
+}
+
+.ld-error {
+  color: var(--ld-win);
+  font-size: 0.85rem;
+  margin-top: -0.6rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

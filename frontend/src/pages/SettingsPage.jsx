@@ -24,18 +24,31 @@ export default function SettingsPage() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <h1>Settings</h1>
-      <label htmlFor="username">Sleeper username</label>
-      <input id="username" value={username} onChange={(e) => setUsername(e.target.value)} />
-      <label htmlFor="leagueIds">Sleeper league IDs (comma-separated)</label>
-      <input
-        id="leagueIds"
-        value={leagueIdsText}
-        onChange={(e) => setLeagueIdsText(e.target.value)}
-      />
-      <button type="submit">Save</button>
-      {saved && <p>Saved.</p>}
-    </form>
+    <div className="ld-page">
+      <div className="ld-cover-band">
+        <h1 className="ld-title">LeagueDeck</h1>
+        <p className="ld-sub">settings</p>
+      </div>
+      <form className="ld-settings-form" onSubmit={handleSubmit}>
+        <label htmlFor="username">Sleeper username</label>
+        <input
+          id="username"
+          className="ld-input"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+        />
+        <label htmlFor="leagueIds">Sleeper league IDs (comma-separated)</label>
+        <input
+          id="leagueIds"
+          className="ld-input"
+          value={leagueIdsText}
+          onChange={(e) => setLeagueIdsText(e.target.value)}
+        />
+        <button type="submit" className="ld-button">
+          Save
+        </button>
+        {saved && <p className="ld-saved">Saved.</p>}
+      </form>
+    </div>
   )
 }

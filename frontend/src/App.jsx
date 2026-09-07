@@ -6,8 +6,9 @@ import SettingsPage from './pages/SettingsPage'
 export default function App() {
   return (
     <BrowserRouter>
-      <nav>
-        <Link to="/">Dashboard</Link> | <Link to="/settings">Settings</Link> |{' '}
+      <nav className="ld-nav">
+        <Link to="/">Dashboard</Link>
+        <Link to="/settings">Settings</Link>
         <Link to="/login">Login</Link>
       </nav>
       <Routes>

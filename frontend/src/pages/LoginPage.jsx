@@ -19,17 +19,26 @@ export default function LoginPage() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <h1>LeagueDeck</h1>
-      <label htmlFor="password">Password</label>
-      <input
-        id="password"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      <button type="submit">Log in</button>
-      {error && <p>{error}</p>}
-    </form>
+    <div className="ld-login-screen">
+      <form className="ld-login-card" onSubmit={handleSubmit}>
+        <h1 className="ld-wordmark">LeagueDeck</h1>
+        <p className="ld-tagline">the gameday program, delivered</p>
+        <label htmlFor="password" className="sr-only">
+          Password
+        </label>
+        <input
+          id="password"
+          className="ld-input"
+          type="password"
+          placeholder="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <button type="submit" className="ld-button">
+          Log in
+        </button>
+        {error && <p className="ld-error">{error}</p>}
+      </form>
+    </div>
   )
 }

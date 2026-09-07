@@ -24,46 +24,77 @@ export default function DashboardPage() {
       .catch(() => {})
   }, [])
 
-  if (error) return <p>{error}</p>
-  if (!leagues) return <p>Loading...</p>
+  if (error) {
+    return (
+      <div className="ld-page">
+        <p className="ld-status">{error}</p>
+      </div>
+    )
+  }
+  if (!leagues) {
+    return (
+      <div className="ld-page">
+        <p className="ld-status">Loading...</p>
+      </div>
+    )
+  }
 
   const degradedPlatforms = syncStatus.filter(isDegraded)
 
   return (
-    <div>
-      <h1>My Leagues</h1>
+    <div className="ld-page">
+      <div className="ld-cover-band">
+        <h1 className="ld-title">LeagueDeck</h1>
+        <p className="ld-sub">your leagues</p>
+      </div>
       {degradedPlatforms.map((status) => (
-        <p key={status.platform} role="alert">
+        <p key={status.platform} role="alert" className="ld-alert">
           {status.platform} last synced{' '}
           {status.last_success_at ? new Date(status.last_success_at).toLocaleString() : 'never'}
           {status.last_error ? ` — ${status.last_error}` : ''} — check Settings.
         </p>
       ))}
-      {leagues.map((league) => (
-        <section key={league.id}>
-          <h2>
-            {league.name} ({league.platform}, {league.season})
-          </h2>
-          {league.teams.map((team) => (
-            <article key={team.id}>
-              <h3>
-                {team.name} {team.is_mine ? '(mine)' : ''}
-              </h3>
-              <p>
-                Week {team.week}: {team.points_for} pts vs {team.opponent_name ?? 'TBD'} (
-                {team.opponent_points ?? '-'} pts)
-              </p>
-              <ul>
-                {team.roster.map((player) => (
-                  <li key={player.player_id}>
-                    {player.name} — {player.position} ({player.team})
-                  </li>
-                ))}
-              </ul>
-            </article>
-          ))}
-        </section>
-      ))}
+      <div className="ld-leagues">
+        {leagues.map((league) => (
+          <section key={league.id}>
+            <div className="ld-section-head">
+              <span className="ld-name">
+                {league.name} ({league.platform}, {league.season})
+              </span>
+              <hr />
+              {league.teams[0]?.week != null && (
+                <span className="ld-wk">week {league.teams[0].week}</span>
+              )}
+            </div>
+            {league.teams.map((team) => (
+              <article key={team.id}>
+                <div className={`ld-dotline ${team.is_mine ? 'ld-you' : 'ld-riv'}`}>
+                  <span className="ld-lbl">
+                    {team.name}
+                    {team.is_mine ? ' (you)' : ''} vs {team.opponent_name ?? 'TBD'}
+                  </span>
+                  <span className="ld-dots" />
+                  <span className="ld-val">
+                    {team.points_for} – {team.opponent_points ?? '-'}
+                  </span>
+                </div>
+                <div className="ld-roster">
+                  {team.roster.map((player) => (
+                    <div className="ld-dotline" key={player.player_id}>
+                      <span className="ld-lbl">
+                        <span className="ld-pos">{player.position}</span>
+                        {player.name}
+                      </span>
+                      <span className="ld-dots" />
+                      <span className="ld-val">{player.team}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </section>
+        ))}
+      </div>
     </div>
   )
 }
