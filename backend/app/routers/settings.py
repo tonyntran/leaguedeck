@@ -34,12 +34,16 @@ def get_sleeper_settings(db: Session = Depends(get_db)):
     league_ids_raw = _get_setting(db, "sleeper_league_ids") or ""
     return {
         "username": username,
-        "league_ids": [x for x in league_ids_raw.split(",") if x],
+        "league_ids": [x.strip() for x in league_ids_raw.split(",") if x.strip()],
     }
 
 
 @router.put("/sleeper")
 def set_sleeper_settings(payload: SleeperSettings, db: Session = Depends(get_db)):
-    _set_setting(db, "sleeper_username", payload.username)
-    _set_setting(db, "sleeper_league_ids", ",".join(payload.league_ids))
+    _set_setting(db, "sleeper_username", payload.username.strip())
+    _set_setting(
+        db,
+        "sleeper_league_ids",
+        ",".join(x.strip() for x in payload.league_ids if x.strip()),
+    )
     return {"ok": True}
