@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.db import init_db
 from app.routers import auth as auth_router
+from app.routers import leagues as leagues_router
 from app.routers import settings as settings_router
 from app.sync import sync_all_platforms
 
@@ -43,6 +44,8 @@ app.add_middleware(
 
 app.include_router(auth_router.router)
 app.include_router(settings_router.router)
+app.include_router(leagues_router.router)
+app.include_router(leagues_router.sync_status_router)
 
 
 @app.get("/health")
