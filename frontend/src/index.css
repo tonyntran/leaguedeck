@@ -44,20 +44,29 @@ button {
   margin-top: 0.2rem;
 }
 
-/* Login screen: centered card on a split background — green cover on top ~34%, beige below */
+/* Login screen: real stacked blocks — a natural-height green cover band on top
+   (same .ld-cover-band Dashboard/Settings use), then a beige area below that fills
+   the remaining viewport height and centers the form within itself. No percentage
+   split of the viewport and no overlaid/centered-across-the-seam card — this way the
+   wordmark always stays inside the green band and the form always stays in the beige
+   area, regardless of viewport height. */
 .ld-login-screen {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--ld-paper);
+}
+.ld-login-content {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 2.4rem 1.5rem;
-  background: linear-gradient(var(--ld-cover) 0 34%, var(--ld-paper) 34%);
 }
 .ld-login-card {
   width: 100%;
   max-width: 320px;
   text-align: center;
-  padding-top: 2.2rem;
 }
 .ld-wordmark {
   font-size: 1.6rem;
@@ -70,7 +79,7 @@ button {
   color: var(--ld-cover-ink);
   opacity: 0.8;
   font-size: 0.85rem;
-  margin-bottom: 1rem;
+  margin-top: 0.2rem;
 }
 
 /* Underline-style inputs, everywhere */
@@ -87,7 +96,6 @@ button {
 }
 .ld-login-card .ld-input {
   border-bottom-color: var(--ld-ink);
-  margin-top: 1.6rem;
   text-align: center;
 }
 .ld-input:focus-visible {
