@@ -1,2 +1,7 @@
-.worktrees/
-.superpowers/
+__pycache__/
+*.pyc
+.env
+backend/data/*.db
+backend/data/sleeper_players_cache.json
+frontend/node_modules/
+frontend/dist/
