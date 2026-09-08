@@ -20,7 +20,11 @@ plans in `docs/superpowers/plans/`.
    ```
 
    Paste the three outputs into `.env` as `APP_PASSWORD_HASH`, `SECRET_KEY`,
-   and `FERNET_KEY` respectively.
+   and `FERNET_KEY` respectively. **The bcrypt hash contains `$` characters
+   (e.g. `$2b$12$...`) — double every `$` to `$$` in `.env`**, or
+   `docker compose` will try to interpolate them as variable references and
+   silently blank out part of the hash (you'll see `WARN ... variable is not
+   set` and login will fail with a hash that doesn't match your password).
 
 3. `docker-compose up --build`
 4. Open `http://localhost:5173`, log in with the password you hashed above,
