@@ -1,4 +1,4 @@
-import { BrowserRouter, Link, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
 import DashboardPage from './pages/DashboardPage'
 import LoginPage from './pages/LoginPage'
 import SettingsPage from './pages/SettingsPage'
@@ -7,9 +7,11 @@ export default function App() {
   return (
     <BrowserRouter>
       <nav className="ld-nav">
-        <Link to="/">Dashboard</Link>
-        <Link to="/settings">Settings</Link>
-        <Link to="/login">Login</Link>
+        <NavLink to="/" end>
+          Dashboard
+        </NavLink>
+        <NavLink to="/settings">Settings</NavLink>
+        <NavLink to="/login">Login</NavLink>
       </nav>
       <Routes>
         <Route path="/" element={<DashboardPage />} />

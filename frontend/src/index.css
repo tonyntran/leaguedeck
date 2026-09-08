@@ -95,7 +95,6 @@ button {
   margin-bottom: 1.2rem;
 }
 .ld-login-card .ld-input {
-  border-bottom-color: var(--ld-ink);
   text-align: center;
 }
 .ld-input:focus-visible {
@@ -173,9 +172,6 @@ button {
   font-size: 0.72rem;
   font-style: italic;
   margin-right: 0.15rem;
-}
-.ld-roster .ld-dotline.ld-out .ld-lbl {
-  color: var(--ld-win);
 }
 
 /* Nav bar: quiet, unobtrusive since each page carries its own masthead */
