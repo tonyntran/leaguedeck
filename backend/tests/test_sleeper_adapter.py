@@ -1,3 +1,6 @@
+import os
+import time
+
 import httpx
 
 from app.adapters import sleeper
@@ -456,6 +459,53 @@ def test_get_actual_stats_fetches_from_stats_endpoint(monkeypatch, tmp_path):
     monkeypatch.setattr(httpx, "get", fake_get)
     result = sleeper.get_actual_stats(season, week)
     assert result["p1"]["pts_ppr"] == 22.0
+
+
+def test_actual_stats_cache_expires_faster_during_a_live_window(monkeypatch, tmp_path):
+    """A 5-minute-old stats cache entry is still fresh under the normal
+    20-minute TTL, but must be treated as stale during a live window (60s
+    TTL) -- otherwise per-player actuals would sit frozen in cache for up
+    to 20 minutes while the team total above them (uncached) ticks up every
+    60 seconds during the fast sync cadence."""
+    monkeypatch.chdir(tmp_path)
+    season, week = "2099", 5
+
+    cache_path = tmp_path / f"data/sleeper_stats_cache_{season}_{week}.json"
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_text('{"p1": {"pts_ppr": 1.0, "pts_half_ppr": 1.0, "pts_std": 1.0}}')
+    five_minutes_ago = time.time() - 5 * 60
+    os.utime(cache_path, (five_minutes_ago, five_minutes_ago))
+
+    monkeypatch.setattr(sleeper, "is_likely_live_window", lambda: False)
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not fetch")))
+    assert sleeper.get_actual_stats(season, week) == {
+        "p1": {"pts_ppr": 1.0, "pts_half_ppr": 1.0, "pts_std": 1.0}
+    }
+
+    monkeypatch.setattr(sleeper, "is_likely_live_window", lambda: True)
+    monkeypatch.setattr(
+        httpx, "get", lambda *a, **k: FakeResponse([{"player_id": "p1", "stats": {"pts_ppr": 9.9}}])
+    )
+    assert sleeper.get_actual_stats(season, week)["p1"]["pts_ppr"] == 9.9
+
+
+def test_projections_cache_ttl_is_unaffected_by_live_window(monkeypatch, tmp_path):
+    """Only "stats" (actual) gets the shortened live-window TTL --
+    projections barely move in-week, so they keep the long TTL regardless."""
+    monkeypatch.chdir(tmp_path)
+    season, week = "2099", 6
+
+    cache_path = tmp_path / f"data/sleeper_projections_cache_{season}_{week}.json"
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_text('{"p1": {"pts_ppr": 1.0, "pts_half_ppr": 1.0, "pts_std": 1.0}}')
+    five_minutes_ago = time.time() - 5 * 60
+    os.utime(cache_path, (five_minutes_ago, five_minutes_ago))
+
+    monkeypatch.setattr(sleeper, "is_likely_live_window", lambda: True)
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not fetch")))
+    assert sleeper.get_projections(season, week) == {
+        "p1": {"pts_ppr": 1.0, "pts_half_ppr": 1.0, "pts_std": 1.0}
+    }
 
 
 def test_normalize_league_includes_actual_and_projected_points(monkeypatch, tmp_path):

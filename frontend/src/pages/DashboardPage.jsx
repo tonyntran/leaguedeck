@@ -10,6 +10,10 @@ const STALE_THRESHOLD_MINUTES = 60
 // whether a game is live, since re-fetching unchanged data off-hours costs
 // nothing.
 const LIVE_REFRESH_INTERVAL_MS = 60000
+// A single dropped request (a blip, a slow response) shouldn't flash a
+// warning -- only a sustained run of failures means the auto-refresh has
+// actually stalled.
+const REFRESH_FAILURE_THRESHOLD = 3
 
 function isDegraded(status) {
   if (status.last_success === false) return true
@@ -76,6 +80,7 @@ export default function DashboardPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncError, setSyncError] = useState(null)
   const [waiverWire, setWaiverWire] = useState({})
+  const [refreshFailureCount, setRefreshFailureCount] = useState(0)
 
   function loadData() {
     getLeagues()
@@ -105,8 +110,19 @@ export default function DashboardPage() {
   // timer refreshes.
   useEffect(() => {
     function refreshScores() {
-      getLeagues().then(setLeagues).catch(() => {})
-      getSyncStatus().then(setSyncStatus).catch(() => {})
+      Promise.all([getLeagues(), getSyncStatus()])
+        .then(([leaguesData, statusData]) => {
+          setLeagues(leaguesData)
+          setSyncStatus(statusData)
+          setRefreshFailureCount(0)
+        })
+        // A silently-stalled timer (session expired, network down) would
+        // otherwise show old scores forever with no indication -- and
+        // since no state changes, isDegraded below never even gets a
+        // chance to recompute from fresh data. Surface it after a few
+        // misses rather than on the first one, so a single dropped
+        // request doesn't flash a warning.
+        .catch(() => setRefreshFailureCount((n) => n + 1))
     }
     const interval = setInterval(refreshScores, LIVE_REFRESH_INTERVAL_MS)
     return () => clearInterval(interval)
@@ -163,6 +179,11 @@ export default function DashboardPage() {
           {status.last_error ? ` — ${status.last_error}` : ''} — check Settings.
         </p>
       ))}
+      {refreshFailureCount >= REFRESH_FAILURE_THRESHOLD && (
+        <p role="alert" className="ld-alert">
+          Live updates paused — check your connection, or log in again if your session expired.
+        </p>
+      )}
       <div className="ld-leagues">
         <div className="ld-team-grid">
           {leagues.map((league) => {

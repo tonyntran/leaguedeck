@@ -1,7 +1,7 @@
 import json
 import logging
+import threading
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -10,8 +10,20 @@ from app.adapters import sleeper as sleeper_adapter
 from app.crypto import decrypt_value
 from app.db import get_sessionmaker
 from app.models import AppSetting, League, Secret, SyncLog, Team
+from app.schedule import is_likely_live_window
 
 logger = logging.getLogger(__name__)
+
+# Guards sync_all_platforms against running twice concurrently. Once the
+# live-window job (every 60s) and the baseline job (every 20 minutes) are
+# both registered, their fixed intervals land on the exact same instant
+# every 20 minutes (1200s is a multiple of 60s) -- without this, that's two
+# threads writing to the same SQLite league rows at once, which SQLite
+# resolves by raising "database is locked" on the loser, surfacing as a
+# false degraded-platform banner during the very games this feature serves.
+# A non-blocking skip (rather than blocking until the lock is free) also
+# means an in-flight sync is never made to run twice back-to-back.
+_sync_lock = threading.Lock()
 
 
 def _get_setting(db: Session, key: str) -> str | None:
@@ -220,39 +232,19 @@ def sync_espn(db: Session) -> None:
 
 
 def sync_all_platforms() -> None:
-    db = get_sessionmaker()()
+    if not _sync_lock.acquire(blocking=False):
+        logger.info("sync_all_platforms: a sync is already in progress, skipping this trigger")
+        return
     try:
-        sync_sleeper(db)
-        sync_espn(db)
-        # Yahoo adapter is added by its own follow-on plan.
+        db = get_sessionmaker()()
+        try:
+            sync_sleeper(db)
+            sync_espn(db)
+            # Yahoo adapter is added by its own follow-on plan.
+        finally:
+            db.close()
     finally:
-        db.close()
-
-
-NFL_SEASON_MONTHS = {9, 10, 11, 12, 1, 2}  # regular season through the Super Bowl
-
-
-def _is_likely_live_window(now: datetime | None = None) -> bool:
-    """A coarse, best-effort approximation of "an NFL game is probably in
-    progress right now" -- hardcoded typical broadcast windows (Thursday
-    Night Football, the Sunday slate, Monday Night Football), not real
-    per-game kickoff times fetched from either platform. This misses flexed
-    Saturday games in December, mid-week schedule changes, and bye-week
-    nuances -- an accepted approximation, since a false positive only costs
-    one extra sync cycle and a false negative just falls back to the
-    existing 20-minute baseline rather than the faster live cadence."""
-    now = now or datetime.now(timezone.utc)
-    et = now.astimezone(ZoneInfo("America/New_York"))
-    if et.month not in NFL_SEASON_MONTHS:
-        return False
-    weekday, hour = et.weekday(), et.hour
-    if weekday == 3:  # Thursday
-        return 20 <= hour <= 23
-    if weekday == 6:  # Sunday
-        return 13 <= hour <= 23
-    if weekday == 0:  # Monday
-        return 20 <= hour <= 23
-    return False
+        _sync_lock.release()
 
 
 def sync_all_platforms_during_live_window() -> None:
@@ -260,6 +252,7 @@ def sync_all_platforms_during_live_window() -> None:
     existing 20-minute sync_all_platforms job -- outside a likely-live
     window this is a no-op, so it adds no load the rest of the time. The
     20-minute job and the manual "Sync now" button are unaffected by this
-    and keep running unconditionally."""
-    if _is_likely_live_window():
+    and keep running unconditionally (sync_all_platforms's own lock is what
+    keeps the two jobs from colliding when their schedules coincide)."""
+    if is_likely_live_window():
         sync_all_platforms()

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import httpx
 
+from app.schedule import is_likely_live_window
+
 logger = logging.getLogger(__name__)
 
 SLEEPER_BASE_URL = "https://api.sleeper.app/v1"
@@ -14,15 +16,18 @@ PLAYERS_CACHE_MAX_AGE_SECONDS = 24 * 60 * 60  # Sleeper asks this endpoint not b
 # Actual stats and projections live on an entirely different, undocumented
 # host than the rest of this adapter's documented api.sleeper.app/v1 base --
 # a real fragility step up, accepted knowingly since neither has an official
-# alternative. Cached briefly (not 24h like PLAYERS_CACHE) since both the
-# 20-minute sync and every waiver-wire page load can trigger a fetch.
+# alternative.
 SLEEPER_STATS_HOST = "https://api.sleeper.com"
 # "stats" (actual, already-played performance) changes during live games, so
-# its cache TTL matches the sync interval (main.py's 20-minute schedule) --
-# a longer TTL here would let a card's per-player actuals visibly lag the
-# team total above them, which refreshes every sync. Projections barely move
-# in-week, so they get a longer TTL to spare the undocumented host traffic.
+# outside a live window its TTL matches the 20-minute baseline sync, but
+# during a live window it matches the fast 60s sync cadence instead (see
+# main.py/schedule.py) -- otherwise a card's per-player actuals would sit
+# frozen in cache for up to 20 minutes while the team total above them
+# (which isn't cached) ticks up every 60 seconds, defeating the point of
+# the faster cadence. Projections barely move in-week regardless of live
+# windows, so they keep the long TTL to spare the undocumented host traffic.
 CACHE_MAX_AGE_SECONDS = {"stats": 20 * 60, "projections": 60 * 60}
+LIVE_WINDOW_STATS_CACHE_MAX_AGE_SECONDS = 60
 
 
 class SleeperAdapterError(Exception):
@@ -83,10 +88,14 @@ def _fetch_weekly_totals(kind: str, season: str, week: int) -> dict:
     list-of-entries shape: each entry has a player_id and a `stats` sub-dict
     with pre-computed pts_ppr/pts_half_ppr/pts_std totals -- verified live
     against the real (undocumented) endpoints during development."""
+    max_age = CACHE_MAX_AGE_SECONDS[kind]
+    if kind == "stats" and is_likely_live_window():
+        max_age = LIVE_WINDOW_STATS_CACHE_MAX_AGE_SECONDS
+
     cache_path = Path(f"data/sleeper_{kind}_cache_{season}_{week}.json")
     if cache_path.exists():
         age = time.time() - cache_path.stat().st_mtime
-        if age < CACHE_MAX_AGE_SECONDS[kind]:
+        if age < max_age:
             return json.loads(cache_path.read_text())
 
     resp = httpx.get(

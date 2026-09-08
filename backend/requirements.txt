@@ -8,4 +8,5 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 itsdangerous==2.2.0
 cryptography==50.0.1
+tzdata==2025.2
 pytest==9.1.1
