@@ -36,6 +36,24 @@ export function putSleeperSettings(username, leagueIds) {
   })
 }
 
+export function getEspnSettings() {
+  return request('/settings/espn')
+}
+
+export function putEspnSettings(leagueIds, espnS2, swid) {
+  const body = { league_ids: leagueIds }
+  // Only send the cookie fields if the user actually typed something this
+  // time -- the backend's optional-secret PUT contract treats a present-
+  // but-blank field the same as an overwrite, so a league-IDs-only edit
+  // must omit them entirely to avoid wiping stored credentials.
+  if (espnS2) body.espn_s2 = espnS2
+  if (swid) body.swid = swid
+  return request('/settings/espn', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
 export function getLeagues() {
   return request('/leagues')
 }
