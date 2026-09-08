@@ -77,16 +77,21 @@ def _sync_one_league(db: Session, league_id: str, my_user_id: str, players_map: 
 
 
 def sync_sleeper(db: Session) -> None:
+    """Sleeper setup is genuinely optional -- ESPN-only users are now a real,
+    supported scenario. Like sync_espn, this checks configuration *before*
+    creating any SyncLog row: if unconfigured, /sync-status should simply
+    omit "sleeper" from its platform list rather than report a
+    permanently-degraded platform."""
+    username = _get_setting(db, "sleeper_username")
+    league_ids = _parse_league_ids(_get_setting(db, "sleeper_league_ids") or "")
+    if not username or not league_ids:
+        return
+
     log = SyncLog(platform="sleeper", started_at=datetime.now(timezone.utc))
     db.add(log)
     db.commit()
 
     try:
-        username = _get_setting(db, "sleeper_username")
-        league_ids = _parse_league_ids(_get_setting(db, "sleeper_league_ids") or "")
-        if not username or not league_ids:
-            raise ValueError("Sleeper username/league IDs not configured")
-
         my_user_id = sleeper_adapter.get_user_id(username)
         players_map = sleeper_adapter.get_players_map()
 

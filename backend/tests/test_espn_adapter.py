@@ -173,6 +173,24 @@ def test_normalize_league_matches_swid_case_and_brace_insensitively(monkeypatch)
     assert my_team["platform_team_id"] == "1"
 
 
+def test_normalize_league_sends_canonical_swid_cookie_to_espn(monkeypatch):
+    """The stored swid may lack braces or have different casing (nothing
+    enforces the exact format) -- the actual HTTP request to ESPN must still
+    send the canonical brace-wrapped, uppercase form, even though our own
+    is_mine comparison already tolerates the variation."""
+    seen_cookies = {}
+
+    def fake_get(url, params=None, cookies=None, timeout=10.0):
+        seen_cookies.update(cookies)
+        return FakeResponse(_combined_response())
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    espn.normalize_league("999", 2026, "s2val", "abc-123")  # no braces, lowercase
+
+    assert seen_cookies["SWID"] == "{ABC-123}"
+
+
 def test_normalize_league_prefers_explicit_name_over_location_nickname(monkeypatch):
     response = _combined_response()
     response["teams"][0]["name"] = "Explicit Team Name"

@@ -21,7 +21,7 @@ PRO_TEAM_MAP = {
     8: "DET", 9: "GB", 10: "TEN", 11: "IND", 12: "KC", 13: "LV", 14: "LAR",
     15: "MIA", 16: "MIN", 17: "NE", 18: "NO", 19: "NYG", 20: "NYJ",
     21: "PHI", 22: "ARI", 23: "PIT", 24: "LAC", 25: "SF", 26: "SEA",
-    27: "TB", 28: "WSH", 29: "CAR", 30: "JAX", 33: "BAL", 34: "HOU",
+    27: "TB", 28: "WAS", 29: "CAR", 30: "JAX", 33: "BAL", 34: "HOU",
 }
 
 
@@ -37,6 +37,15 @@ def _normalize_guid(raw: str) -> str:
     return raw.strip().strip("{}").upper()
 
 
+def _canonical_swid_cookie(swid: str) -> str:
+    """ESPN's API expects the SWID cookie in canonical brace-wrapped,
+    uppercase form -- a user who pastes it without braces or in lowercase
+    (nothing in the UI currently enforces the exact format) would otherwise
+    send a cookie ESPN rejects, even though our own is_mine comparison
+    (_normalize_guid) already tolerates the same variation."""
+    return "{" + _normalize_guid(swid) + "}"
+
+
 def _get_combined_view(league_id: str, season: int, espn_s2: str, swid: str) -> dict:
     url = f"{ESPN_BASE_URL}/{season}/segments/0/leagues/{league_id}"
     resp = httpx.get(
@@ -47,7 +56,7 @@ def _get_combined_view(league_id: str, season: int, espn_s2: str, swid: str) -> 
             ("view", "mMatchup"),
             ("view", "mSettings"),
         ],
-        cookies={"espn_s2": espn_s2, "SWID": swid},
+        cookies={"espn_s2": espn_s2, "SWID": _canonical_swid_cookie(swid)},
         timeout=10.0,
     )
     resp.raise_for_status()
@@ -82,6 +91,13 @@ def normalize_league(league_id: str, season: int, espn_s2: str, swid: str) -> di
     shared League/Team shape (the same shape sleeper.normalize_league produces)."""
     data = _get_combined_view(league_id, season, espn_s2, swid)
 
+    # Assumes scoringPeriodId (ESPN's "current NFL week") equals matchupPeriodId
+    # for the purposes of finding this week's game in `schedule` -- true for
+    # standard weekly matchups, but unverified against a real league for
+    # multi-week playoff matchups, where the two can diverge. If they diverge,
+    # _team_score's "no game found" fallback (0.0, None, None) applies silently
+    # rather than erroring -- flag this specifically when real-league
+    # verification is eventually run.
     week = data["scoringPeriodId"]
     schedule = data.get("schedule") or []
     my_guid = _normalize_guid(swid)
@@ -129,7 +145,7 @@ def normalize_league(league_id: str, season: int, espn_s2: str, swid: str) -> di
     return {
         "platform": "espn",
         "platform_league_id": league_id,
-        "name": data.get("settings", {}).get("name") or f"ESPN League {league_id}",
+        "name": (data.get("settings") or {}).get("name") or f"ESPN League {league_id}",
         "season": str(season),
         "teams": teams,
     }

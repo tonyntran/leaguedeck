@@ -137,6 +137,9 @@ def test_sync_sleeper_survives_db_error_during_cleanup(monkeypatch):
 
     init_db()
     db = get_sessionmaker()()
+    db.add(AppSetting(key="sleeper_username", value="myuser"))
+    db.add(AppSetting(key="sleeper_league_ids", value="999"))
+    db.commit()
 
     def locked(*args, **kwargs):
         raise OperationalError("SELECT 1", {}, Exception("database is locked"))
@@ -150,11 +153,15 @@ def test_sync_sleeper_survives_db_error_during_cleanup(monkeypatch):
             return real_commit()
         locked()
 
+    def raise_adapter_error(username):
+        raise sleeper_adapter.SleeperAdapterError("boom")
+
+    monkeypatch.setattr(sleeper_adapter, "get_user_id", raise_adapter_error)
     monkeypatch.setattr(db, "commit", flaky_commit)
     monkeypatch.setattr(db, "rollback", locked)
 
-    # No settings configured -> ValueError -> except -> rollback raises ->
-    # finally -> commit raises. Nothing may escape.
+    # Configured -> SyncLog created -> get_user_id raises -> except ->
+    # rollback raises -> finally -> commit raises. Nothing may escape.
     sync_sleeper(db)
 
     assert commits["n"] >= 2, "the finally-block commit should have been attempted"
@@ -192,17 +199,17 @@ def test_sync_sleeper_swallows_adapter_http_errors(monkeypatch):
     db.close()
 
 
-def test_sync_sleeper_records_failure_without_raising(monkeypatch):
+def test_sync_sleeper_writes_no_synclog_when_unconfigured():
+    """A user who never configures Sleeper (now a real scenario, since ESPN
+    can be the only platform someone sets up) must not see it reported as a
+    failing platform forever -- no SyncLog row at all when nothing is
+    configured."""
+    from app.models import SyncLog
+
     init_db()
     db = get_sessionmaker()()
-    # No AppSetting rows configured — sync_sleeper should record a failed
-    # SyncLog, not raise, so the scheduler never crashes.
-    from app.models import SyncLog
 
     sync_sleeper(db)
 
-    log = db.query(SyncLog).filter(SyncLog.platform == "sleeper").first()
-    assert log is not None
-    assert log.success is False
-    assert log.error is not None
+    assert db.query(SyncLog).filter(SyncLog.platform == "sleeper").count() == 0
     db.close()
