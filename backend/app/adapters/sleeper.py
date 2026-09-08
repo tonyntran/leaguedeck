@@ -23,6 +23,20 @@ def get_user_id(username: str) -> str:
     return data["user_id"]
 
 
+def get_trending_adds(lookback_hours: int = 24, limit: int = 25) -> list[dict]:
+    """Platform-wide trending adds across all of Sleeper — NOT specific to
+    any one league. Returns [{"player_id": str, "count": int}, ...] exactly
+    as Sleeper returns it; callers cross-reference against their own
+    league's rosters to personalize it."""
+    resp = httpx.get(
+        f"{SLEEPER_BASE_URL}/players/nfl/trending/add"
+        f"?lookback_hours={lookback_hours}&limit={limit}",
+        timeout=10.0,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def get_players_map() -> dict:
     """Returns {player_id: {"full_name", "position", "team"}}, cached on disk
     for up to 24h since Sleeper's docs ask this bulk endpoint not be polled often."""

@@ -364,3 +364,23 @@ def test_normalize_league_defaults_is_starter_false_when_starters_missing(monkey
     result = sleeper.normalize_league(league_id, my_user_id="u1", players_map={})
     (team,) = result["teams"]
     assert team["roster_json"][0]["is_starter"] is False
+
+
+def test_get_trending_adds_returns_platform_wide_list(monkeypatch):
+    def fake_get(url, timeout=10.0):
+        assert url == f"{sleeper.SLEEPER_BASE_URL}/players/nfl/trending/add?lookback_hours=24&limit=25"
+        return FakeResponse([{"player_id": "p1", "count": 42}, {"player_id": "p2", "count": 10}])
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    result = sleeper.get_trending_adds()
+    assert result == [{"player_id": "p1", "count": 42}, {"player_id": "p2", "count": 10}]
+
+
+def test_get_trending_adds_honors_custom_params(monkeypatch):
+    def fake_get(url, timeout=10.0):
+        assert url == f"{sleeper.SLEEPER_BASE_URL}/players/nfl/trending/add?lookback_hours=48&limit=10"
+        return FakeResponse([])
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    result = sleeper.get_trending_adds(lookback_hours=48, limit=10)
+    assert result == []
