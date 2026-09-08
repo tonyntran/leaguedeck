@@ -1,9 +1,10 @@
 import json
 from datetime import timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.adapters import sleeper
 from app.auth import require_auth
 from app.db import get_db
 from app.models import League, SyncLog, Team
@@ -40,6 +41,42 @@ def list_leagues(db: Session = Depends(get_db)):
             }
         )
     return result
+
+
+@router.get("/{league_id}/waiver-wire")
+def get_waiver_wire(league_id: int, db: Session = Depends(get_db)):
+    league = db.query(League).filter(League.id == league_id).first()
+    if league is None or league.platform != "sleeper":
+        raise HTTPException(status_code=404, detail="League not found")
+
+    teams = db.query(Team).filter(Team.league_id == league.id).all()
+    if not teams:
+        return []
+
+    rostered_ids = {
+        player["player_id"] for team in teams for player in json.loads(team.roster_json)
+    }
+
+    try:
+        trending = sleeper.get_trending_adds()
+        players_map = sleeper.get_players_map()
+    except Exception:
+        # A Sleeper hiccup on this nice-to-have feature shouldn't read as a
+        # broken dashboard — degrade to no suggestions rather than a 500.
+        return []
+
+    available = [
+        {
+            "player_id": t["player_id"],
+            "name": players_map.get(t["player_id"], {}).get("full_name", t["player_id"]),
+            "position": players_map.get(t["player_id"], {}).get("position"),
+            "team": players_map.get(t["player_id"], {}).get("team"),
+            "trend_count": t["count"],
+        }
+        for t in trending
+        if t["player_id"] not in rostered_ids
+    ]
+    return sorted(available, key=lambda p: p["trend_count"], reverse=True)
 
 
 sync_status_router = APIRouter(
