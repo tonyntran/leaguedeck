@@ -3,6 +3,14 @@ import { getLeagues, getSyncStatus, getWaiverWire, triggerSync } from '../api/cl
 
 const STALE_THRESHOLD_MINUTES = 60
 
+// GET /leagues and /sync-status are both local DB reads (no external
+// platform calls), so polling them this often is cheap year-round. What
+// actually makes this refresh meaningful during games is the backend's own
+// live-window sync cadence (see sync.py) -- this timer doesn't need to know
+// whether a game is live, since re-fetching unchanged data off-hours costs
+// nothing.
+const LIVE_REFRESH_INTERVAL_MS = 60000
+
 function isDegraded(status) {
   if (status.last_success === false) return true
   if (!status.last_success_at) return true
@@ -87,6 +95,22 @@ export default function DashboardPage() {
   }
 
   useEffect(loadData, [])
+
+  // Waiver wire (trending adds) doesn't need a 60s refresh -- it's a "nice
+  // to have" list that doesn't move that fast, and re-fetching it this
+  // often would poll Sleeper's live trending/players endpoints regardless
+  // of whether a game is actually live, undermining the point of gating
+  // the backend's own fast sync to likely-live windows. Scores and sync
+  // status are both cheap local reads, so they're the only things this
+  // timer refreshes.
+  useEffect(() => {
+    function refreshScores() {
+      getLeagues().then(setLeagues).catch(() => {})
+      getSyncStatus().then(setSyncStatus).catch(() => {})
+    }
+    const interval = setInterval(refreshScores, LIVE_REFRESH_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [])
 
   async function handleSyncNow() {
     setSyncing(true)
