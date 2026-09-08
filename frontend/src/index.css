@@ -313,6 +313,15 @@ a.ld-card-head:hover {
   flex-shrink: 0;
   color: var(--ld-tc-tm);
 }
+.ld-roster-row .ld-pts,
+.ld-waiver-row .ld-pts {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  font-weight: bold;
+  color: var(--ld-tc-score);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 .ld-waiver-row {
   display: flex;
   gap: 0.5rem;

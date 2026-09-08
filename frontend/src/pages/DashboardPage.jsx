@@ -26,16 +26,33 @@ function byPositionOrder(players) {
   })
 }
 
+// Neither platform reports a per-player score until that player's game has
+// started, so "actual" and "projected" are each independently optional --
+// pre-kickoff shows the projection alone, in-progress/final shows the
+// actual (with the projection alongside, for comparison).
+function formatPoints(actualPoints, projectedPoints) {
+  const actual = actualPoints != null ? actualPoints.toFixed(1) : null
+  const projected = projectedPoints != null ? projectedPoints.toFixed(1) : null
+  if (actual != null && projected != null) return `${actual} (proj ${projected})`
+  if (actual != null) return actual
+  if (projected != null) return `${projected} proj`
+  return null
+}
+
 function RosterList({ players }) {
   return (
     <div>
-      {players.map((player) => (
-        <div className="ld-roster-row" key={player.player_id}>
-          <span className="ld-pos">{player.position}</span>
-          <span className="ld-nm">{player.name}</span>
-          <span className="ld-tm">{player.team}</span>
-        </div>
-      ))}
+      {players.map((player) => {
+        const pts = formatPoints(player.actual_points, player.projected_points)
+        return (
+          <div className="ld-roster-row" key={player.player_id}>
+            <span className="ld-pos">{player.position}</span>
+            <span className="ld-nm">{player.name}</span>
+            <span className="ld-tm">{player.team}</span>
+            {pts && <span className="ld-pts">{pts}</span>}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -184,14 +201,18 @@ export default function DashboardPage() {
                        and typically 10-18 survive the rostered filter, which
                        would make this the tallest section on the card. Purely
                        a display concern — the response shape is unchanged. */
-                    waiverWire[league.id].slice(0, 10).map((player) => (
-                      <div className="ld-waiver-row" key={player.player_id}>
-                        <span className="ld-pos">{player.position}</span>
-                        <span className="ld-nm">{player.name}</span>
-                        <span className="ld-tm">{player.team}</span>
-                        <span className="ld-trend">{player.trend_count}</span>
-                      </div>
-                    ))
+                    waiverWire[league.id].slice(0, 10).map((player) => {
+                      const pts = formatPoints(player.actual_points, player.projected_points)
+                      return (
+                        <div className="ld-waiver-row" key={player.player_id}>
+                          <span className="ld-pos">{player.position}</span>
+                          <span className="ld-nm">{player.name}</span>
+                          <span className="ld-tm">{player.team}</span>
+                          {pts && <span className="ld-pts">{pts}</span>}
+                          <span className="ld-trend">{player.trend_count}</span>
+                        </div>
+                      )
+                    })
                   )}
                 </div>
                 )}
