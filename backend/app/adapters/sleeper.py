@@ -125,12 +125,14 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
                     opponent_name = _team_name_of(opp_owner)
                 opponent_points = opponent["points"]
 
+        starter_ids = set(roster.get("starters") or [])
         roster_players = [
             {
                 "player_id": pid,
                 "name": players_map.get(pid, {}).get("full_name", pid),
                 "position": players_map.get(pid, {}).get("position"),
                 "team": players_map.get(pid, {}).get("team"),
+                "is_starter": pid in starter_ids,
             }
             for pid in (roster.get("players") or [])
         ]

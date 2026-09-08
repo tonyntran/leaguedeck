@@ -66,7 +66,7 @@ def test_normalize_league_builds_teams_with_opponent_and_roster(monkeypatch):
     assert my_team["opponent_name"] == "Rival"
     assert my_team["opponent_points"] == 90.2
     assert my_team["roster_json"] == [
-        {"player_id": "p1", "name": "Player One", "position": "RB", "team": "KC"}
+        {"player_id": "p1", "name": "Player One", "position": "RB", "team": "KC", "is_starter": False}
     ]
 
 
@@ -150,6 +150,7 @@ def test_normalize_league_pairs_opponents_by_matchup_id_not_list_order(monkeypat
         "name": "pX",
         "position": None,
         "team": None,
+        "is_starter": False,
     }
     assert by_id["4"]["roster_json"] == []
 
@@ -298,3 +299,68 @@ def test_normalize_league_handles_week_with_no_matchups(monkeypatch):
     assert team["opponent_name"] is None
     assert team["opponent_points"] is None
     assert team["week"] == 2
+
+
+def test_normalize_league_marks_starters_from_starters_list(monkeypatch):
+    """Sleeper's roster object carries a `starters` array (player_ids currently
+    in the starting lineup) separate from the full `players` list. Each roster
+    player must be flagged so the dashboard can split starters from bench."""
+    league_id = "888"
+    base = sleeper.SLEEPER_BASE_URL
+    responses = {
+        f"{base}/league/{league_id}": FakeResponse(
+            {"name": "Starters League", "season": "2026", "settings": {"leg": 1}}
+        ),
+        f"{base}/league/{league_id}/rosters": FakeResponse(
+            [
+                {
+                    "roster_id": 1,
+                    "owner_id": "u1",
+                    "players": ["p1", "p2", "p3"],
+                    "starters": ["p1", "p3"],
+                }
+            ]
+        ),
+        f"{base}/league/{league_id}/users": FakeResponse(
+            [{"user_id": "u1", "display_name": "Me", "metadata": {}}]
+        ),
+        f"{base}/league/{league_id}/matchups/1": FakeResponse([]),
+    }
+    monkeypatch.setattr(httpx, "get", _fake_get_from(responses))
+
+    players_map = {
+        "p1": {"full_name": "Player One", "position": "QB", "team": "KC"},
+        "p2": {"full_name": "Player Two", "position": "RB", "team": "SF"},
+        "p3": {"full_name": "Player Three", "position": "WR", "team": "DAL"},
+    }
+    result = sleeper.normalize_league(league_id, my_user_id="u1", players_map=players_map)
+
+    (team,) = result["teams"]
+    by_id = {p["player_id"]: p for p in team["roster_json"]}
+    assert by_id["p1"]["is_starter"] is True
+    assert by_id["p2"]["is_starter"] is False
+    assert by_id["p3"]["is_starter"] is True
+
+
+def test_normalize_league_defaults_is_starter_false_when_starters_missing(monkeypatch):
+    """Older/malformed roster payloads without a `starters` key must not crash
+    — every player defaults to bench rather than erroring."""
+    league_id = "999888"
+    base = sleeper.SLEEPER_BASE_URL
+    responses = {
+        f"{base}/league/{league_id}": FakeResponse(
+            {"name": "No Starters Key League", "season": "2026", "settings": {"leg": 1}}
+        ),
+        f"{base}/league/{league_id}/rosters": FakeResponse(
+            [{"roster_id": 1, "owner_id": "u1", "players": ["p1"]}]
+        ),
+        f"{base}/league/{league_id}/users": FakeResponse(
+            [{"user_id": "u1", "display_name": "Me", "metadata": {}}]
+        ),
+        f"{base}/league/{league_id}/matchups/1": FakeResponse([]),
+    }
+    monkeypatch.setattr(httpx, "get", _fake_get_from(responses))
+
+    result = sleeper.normalize_league(league_id, my_user_id="u1", players_map={})
+    (team,) = result["teams"]
+    assert team["roster_json"][0]["is_starter"] is False
