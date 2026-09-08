@@ -214,6 +214,99 @@ button {
   padding: 0 1.7rem 2rem;
 }
 
+/* Dashboard team card ("Trading Card Wall"). Separate token namespace from
+   the --ld-* letterpress tokens above. Light-only for now, matching the rest
+   of the app (Login/Settings/cover band have no dark mode yet) — the dark
+   "black label" variant exists but isn't wired to the OS preference, since
+   flipping only this one card while the beige page/green cover stay light
+   reads as broken, not as a feature. Full-app dark mode is a real follow-up,
+   not a per-component accident. */
+:root {
+  --ld-tc-card: #f6f1e4;
+  --ld-tc-border: #b8933e;
+  --ld-tc-nameplate: #2f4b3c;
+  --ld-tc-nameplate-ink: #f2ead2;
+  --ld-tc-mine: #7a2e2e;
+  --ld-tc-score: #c9a24b;
+  --ld-tc-ink: #3a3226;
+  --ld-tc-pos: #8a6d3b;
+  --ld-tc-tm: #8a7a5c;
+}
+
+.ld-team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 420px));
+  gap: 0.9rem;
+  margin-top: 0.6rem;
+}
+.ld-team-card {
+  background: var(--ld-tc-card);
+  border: 1px solid var(--ld-tc-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 0 var(--ld-tc-border) inset;
+}
+.ld-card-head {
+  background: var(--ld-tc-nameplate);
+  color: var(--ld-tc-nameplate-ink);
+  padding: 0.6rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.92rem;
+}
+.ld-team-card.ld-mine .ld-card-head {
+  background: var(--ld-tc-mine);
+}
+.ld-card-head .ld-card-score {
+  font-variant-numeric: tabular-nums;
+  font-weight: bold;
+  color: var(--ld-tc-score);
+  font-size: 0.82rem;
+}
+.ld-lineup-section {
+  padding: 0.6rem 0.9rem 0.7rem;
+}
+.ld-lineup-section + .ld-lineup-section {
+  border-top: 1px solid var(--ld-tc-border);
+}
+.ld-lineup-section.ld-bench {
+  opacity: 0.75;
+}
+.ld-lineup-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--ld-tc-pos);
+  margin: 0 0 0.35rem;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.ld-roster-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+  padding: 0.2rem 0;
+  color: var(--ld-tc-ink);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.ld-roster-row .ld-pos {
+  font-size: 0.68rem;
+  font-weight: 700;
+  width: 2rem;
+  flex-shrink: 0;
+  color: var(--ld-tc-pos);
+}
+.ld-roster-row .ld-nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ld-roster-row .ld-tm {
+  margin-left: auto;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+  color: var(--ld-tc-tm);
+}
+
 .ld-settings-form {
   padding: 1.5rem 1.7rem;
   max-width: 420px;

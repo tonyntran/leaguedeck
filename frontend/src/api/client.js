@@ -43,3 +43,7 @@ export function getLeagues() {
 export function getSyncStatus() {
   return request('/sync-status')
 }
+
+export function triggerSync() {
+  return request('/sync-status/run', { method: 'POST' })
+}
