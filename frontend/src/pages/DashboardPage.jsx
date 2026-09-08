@@ -53,6 +53,7 @@ export default function DashboardPage() {
       .then((data) => {
         setLeagues(data)
         data.forEach((league) => {
+          if (league.platform !== 'sleeper') return
           getWaiverWire(league.id)
             .then((players) => setWaiverWire((prev) => ({ ...prev, [league.id]: players })))
             .catch(() => setWaiverWire((prev) => ({ ...prev, [league.id]: [] })))
@@ -167,6 +168,7 @@ export default function DashboardPage() {
                   <h3 className="ld-lineup-label">Bench</h3>
                   <RosterList players={bench} />
                 </div>
+                {league.platform === 'sleeper' && (
                 <div className="ld-lineup-section">
                   <h3 className="ld-lineup-label">Waiver wire</h3>
                   {waiverWire[league.id] === undefined ? (
@@ -188,6 +190,7 @@ export default function DashboardPage() {
                     ))
                   )}
                 </div>
+                )}
               </article>
             )
           })}
