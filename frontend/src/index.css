@@ -306,6 +306,41 @@ button {
   flex-shrink: 0;
   color: var(--ld-tc-tm);
 }
+.ld-waiver-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+  padding: 0.2rem 0;
+  color: var(--ld-tc-ink);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.ld-waiver-row .ld-pos {
+  font-size: 0.68rem;
+  font-weight: 700;
+  width: 2rem;
+  flex-shrink: 0;
+  color: var(--ld-tc-pos);
+}
+.ld-waiver-row .ld-nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ld-waiver-row .ld-tm {
+  margin-left: auto;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+  color: var(--ld-tc-tm);
+}
+.ld-waiver-row .ld-trend {
+  font-variant-numeric: tabular-nums;
+  font-weight: bold;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+  color: var(--ld-tc-score);
+  width: 2.4rem;
+  text-align: right;
+}
 
 .ld-settings-form {
   padding: 1.5rem 1.7rem;

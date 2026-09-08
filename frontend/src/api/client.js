@@ -47,3 +47,7 @@ export function getSyncStatus() {
 export function triggerSync() {
   return request('/sync-status/run', { method: 'POST' })
 }
+
+export function getWaiverWire(leagueId) {
+  return request(`/leagues/${leagueId}/waiver-wire`)
+}
