@@ -5,12 +5,21 @@ export default function SettingsPage() {
   const [username, setUsername] = useState('')
   const [leagueIdsText, setLeagueIdsText] = useState('')
   const [saved, setSaved] = useState(false)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
-    getSleeperSettings().then((data) => {
-      setUsername(data.username)
-      setLeagueIdsText(data.league_ids.join(', '))
-    })
+    getSleeperSettings()
+      .then((data) => {
+        setUsername(data.username)
+        setLeagueIdsText(data.league_ids.join(', '))
+      })
+      .catch((err) => {
+        setError(
+          err.status === 401
+            ? 'Your session expired. Log in again to load settings.'
+            : 'Could not load settings.',
+        )
+      })
   }, [])
 
   async function handleSubmit(e) {
@@ -19,8 +28,18 @@ export default function SettingsPage() {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
-    await putSleeperSettings(username, leagueIds)
-    setSaved(true)
+    setError(null)
+    setSaved(false)
+    try {
+      await putSleeperSettings(username, leagueIds)
+      setSaved(true)
+    } catch (err) {
+      setError(
+        err.status === 401
+          ? 'Your session expired. Log in again to save settings.'
+          : 'Could not save settings.',
+      )
+    }
   }
 
   return (
@@ -48,6 +67,11 @@ export default function SettingsPage() {
           Save
         </button>
         {saved && <p className="ld-saved">Saved.</p>}
+        {error && (
+          <p role="alert" className="ld-error">
+            {error}
+          </p>
+        )}
       </form>
     </div>
   )

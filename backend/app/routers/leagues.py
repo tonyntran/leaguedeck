@@ -1,4 +1,5 @@
 import json
+from datetime import timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -59,7 +60,16 @@ def get_sync_status(db: Session = Depends(get_db)):
         result.append(
             {
                 "platform": platform,
-                "last_success_at": latest.finished_at.isoformat() if latest.finished_at else None,
+                # SQLite's DateTime column drops tzinfo on round-trip. Every
+                # timestamp written here is datetime.now(timezone.utc), so
+                # re-attaching UTC is unambiguous — and necessary, or the ISO
+                # string carries no offset and JavaScript's new Date() parses
+                # it as local time.
+                "last_success_at": (
+                    latest.finished_at.replace(tzinfo=timezone.utc).isoformat()
+                    if latest.finished_at
+                    else None
+                ),
                 "last_success": latest.success,
                 "last_error": latest.error,
             }

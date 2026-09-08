@@ -1,4 +1,7 @@
-const BASE_URL = 'http://localhost:8000'
+// Same-origin: nginx (prod) and the Vite dev-server proxy (dev) both forward
+// the API paths to the backend, so relative URLs work over localhost, a LAN
+// IP, or a Tailscale hostname alike.
+const BASE_URL = ''
 
 async function request(path, options = {}) {
   const resp = await fetch(`${BASE_URL}${path}`, {

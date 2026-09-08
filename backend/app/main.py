@@ -2,7 +2,6 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import init_db
@@ -34,13 +33,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="LeagueDeck", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS middleware: the browser is always same-origin with the API. In Docker
+# nginx proxies /auth, /settings, /leagues, /sync-status and /health through to
+# this app; in local development Vite's server.proxy does the same. Adding CORS
+# back would only be needed if the SPA were served from a different origin.
 
 app.include_router(auth_router.router)
 app.include_router(settings_router.router)
