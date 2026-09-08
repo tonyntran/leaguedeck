@@ -137,12 +137,16 @@ export default function DashboardPage() {
             const bench = byPositionOrder(myTeam.roster.filter((p) => !p.is_starter))
 
             // Sleeper's web app resolves "/team" to the logged-in user's own
-            // team within that league — no roster_id needed. Other platforms
-            // don't have a known link target yet, so the header stays plain.
+            // team within that league — no roster_id needed. ESPN has no such
+            // shorthand: its team page URL requires the numeric team ID
+            // alongside the league ID, which is exactly what platform_team_id
+            // already stores for ESPN leagues.
             const teamUrl =
               league.platform === 'sleeper' && league.platform_league_id
                 ? `https://sleeper.com/leagues/${league.platform_league_id}/team`
-                : null
+                : league.platform === 'espn' && league.platform_league_id && myTeam.platform_team_id
+                  ? `https://fantasy.espn.com/football/team?leagueId=${league.platform_league_id}&teamId=${myTeam.platform_team_id}`
+                  : null
             const CardHeadTag = teamUrl ? 'a' : 'div'
 
             return (
