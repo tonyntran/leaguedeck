@@ -317,10 +317,18 @@ a.ld-card-head:hover {
 .ld-waiver-row .ld-pts {
   font-variant-numeric: tabular-nums;
   font-size: 0.72rem;
-  font-weight: bold;
+  font-weight: 700;
   color: var(--ld-tc-score);
   flex-shrink: 0;
   white-space: nowrap;
+  /* Always rendered (see DashboardPage.jsx), even with no points yet, so
+     this column reserves consistent width -- otherwise .ld-tm before it
+     would shift left/right depending on whether a row has points. Sized
+     for the common pre-kickoff case ("16.0 proj"); the rarer "both" case
+     ("14.2 (proj 16.0)") is allowed to overflow slightly rather than
+     reserving worst-case width on every row. */
+  min-width: 3.6rem;
+  text-align: right;
 }
 .ld-waiver-row {
   display: flex;

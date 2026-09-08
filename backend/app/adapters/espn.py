@@ -1,4 +1,8 @@
+import logging
+
 import httpx
+
+logger = logging.getLogger(__name__)
 
 ESPN_BASE_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons"
 
@@ -61,7 +65,11 @@ def _get_combined_view(league_id: str, season: int, espn_s2: str, swid: str) -> 
             ("view", "mMatchupScore"),
         ],
         cookies={"espn_s2": espn_s2, "SWID": _canonical_swid_cookie(swid)},
-        timeout=10.0,
+        # mMatchupScore adds a per-player stats array to every roster entry
+        # on every team -- a materially larger response than the other four
+        # views alone. 10s was fine before; bumped so this points-only
+        # addition can't turn into the whole league sync timing out.
+        timeout=20.0,
     )
     resp.raise_for_status()
     return resp.json()
@@ -118,6 +126,11 @@ def _team_score(schedule: list[dict], week: int, team_id: int):
 def normalize_league(league_id: str, season: int, espn_s2: str, swid: str) -> dict:
     """Fetch everything for one ESPN league and normalize into LeagueDeck's
     shared League/Team shape (the same shape sleeper.normalize_league produces)."""
+    # A str season would silently zero out every player's actual/projected
+    # points below (seasonId comparison in _stat_total never matches) with
+    # no error and no log -- normalize since every caller in this codebase
+    # already passes an int, but the type hint alone doesn't enforce it.
+    season = int(season)
     data = _get_combined_view(league_id, season, espn_s2, swid)
 
     # Assumes scoringPeriodId (ESPN's "current NFL week") equals matchupPeriodId
@@ -134,6 +147,8 @@ def normalize_league(league_id: str, season: int, espn_s2: str, swid: str) -> di
     teams_by_id = {t["id"]: t for t in data.get("teams") or []}
 
     teams = []
+    total_roster_players = 0
+    resolved_roster_players = 0
     for team in teams_by_id.values():
         points_for, opponent_team_id, opponent_points = _team_score(schedule, week, team["id"])
         opponent = teams_by_id.get(opponent_team_id)
@@ -162,6 +177,12 @@ def normalize_league(league_id: str, season: int, espn_s2: str, swid: str) -> di
                     ),
                 }
             )
+        total_roster_players += len(roster_players)
+        resolved_roster_players += sum(
+            1
+            for p in roster_players
+            if p["actual_points"] is not None or p["projected_points"] is not None
+        )
 
         teams.append(
             {
@@ -174,6 +195,20 @@ def normalize_league(league_id: str, season: int, espn_s2: str, swid: str) -> di
                 "opponent_points": opponent_points,
                 "week": week,
             }
+        )
+
+    # A schema drift in the (unofficial, community-reverse-engineered)
+    # mMatchupScore shape -- e.g. ESPN moving `stats` or renaming
+    # `appliedTotal` -- would otherwise silently resolve 0 players' points
+    # with no error and no log, indistinguishable from "no games started
+    # yet" (also all-None). This is the one signal that tells them apart.
+    if total_roster_players and not resolved_roster_players:
+        logger.warning(
+            "espn: resolved 0/%d roster players' points for league %s week %s -- "
+            "possible mMatchupScore schema drift",
+            total_roster_players,
+            league_id,
+            week,
         )
 
     return {

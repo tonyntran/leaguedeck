@@ -15,10 +15,14 @@ PLAYERS_CACHE_MAX_AGE_SECONDS = 24 * 60 * 60  # Sleeper asks this endpoint not b
 # host than the rest of this adapter's documented api.sleeper.app/v1 base --
 # a real fragility step up, accepted knowingly since neither has an official
 # alternative. Cached briefly (not 24h like PLAYERS_CACHE) since both the
-# 20-minute sync and every waiver-wire page load can trigger a fetch, and
-# projections/stats shift meaningfully during the week.
+# 20-minute sync and every waiver-wire page load can trigger a fetch.
 SLEEPER_STATS_HOST = "https://api.sleeper.com"
-WEEKLY_TOTALS_CACHE_MAX_AGE_SECONDS = 60 * 60
+# "stats" (actual, already-played performance) changes during live games, so
+# its cache TTL matches the sync interval (main.py's 20-minute schedule) --
+# a longer TTL here would let a card's per-player actuals visibly lag the
+# team total above them, which refreshes every sync. Projections barely move
+# in-week, so they get a longer TTL to spare the undocumented host traffic.
+CACHE_MAX_AGE_SECONDS = {"stats": 20 * 60, "projections": 60 * 60}
 
 
 class SleeperAdapterError(Exception):
@@ -82,7 +86,7 @@ def _fetch_weekly_totals(kind: str, season: str, week: int) -> dict:
     cache_path = Path(f"data/sleeper_{kind}_cache_{season}_{week}.json")
     if cache_path.exists():
         age = time.time() - cache_path.stat().st_mtime
-        if age < WEEKLY_TOTALS_CACHE_MAX_AGE_SECONDS:
+        if age < CACHE_MAX_AGE_SECONDS[kind]:
             return json.loads(cache_path.read_text())
 
     resp = httpx.get(
@@ -128,7 +132,10 @@ def _pick_points(totals_entry: dict | None, scoring_settings: dict) -> float | N
     already in this app."""
     if not totals_entry:
         return None
-    rec_points = scoring_settings.get("rec", 0)
+    # `.get("rec", 0)` alone would not catch an explicit `"rec": null` --
+    # Sleeper is unlikely to send that, but the `or 0` costs nothing and
+    # avoids a `None >= 1` TypeError taking down the whole roster loop.
+    rec_points = scoring_settings.get("rec") or 0
     if rec_points >= 1:
         return totals_entry.get("pts_ppr")
     if rec_points >= 0.5:
@@ -219,6 +226,8 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
         matchups_by_matchup_id.setdefault(m["matchup_id"], []).append(m)
 
     teams = []
+    total_roster_players = 0
+    resolved_roster_players = 0
     for roster in rosters:
         owner = users_by_id.get(roster["owner_id"], {})
         team_name = (
@@ -257,6 +266,12 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
             }
             for pid in (roster.get("players") or [])
         ]
+        total_roster_players += len(roster_players)
+        resolved_roster_players += sum(
+            1
+            for p in roster_players
+            if p["actual_points"] is not None or p["projected_points"] is not None
+        )
 
         teams.append(
             {
@@ -269,6 +284,22 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
                 "opponent_points": opponent_points,
                 "week": week,
             }
+        )
+
+    # The stats/projections fetch can succeed (no exception, so the guards
+    # above stay silent) while still matching zero players -- e.g. Sleeper
+    # renaming pts_ppr, or an off-by-one on the computed week. That failure
+    # mode would otherwise be indistinguishable from "no games have started
+    # yet" (also all-None). This is the one signal that tells them apart.
+    if total_roster_players and not resolved_roster_players and (actual_stats or projections):
+        logger.warning(
+            "sleeper: fetched %d actual + %d projected entries but resolved 0/%d roster "
+            "players' points for league %s week %s -- possible schema drift",
+            len(actual_stats),
+            len(projections),
+            total_roster_players,
+            league_id,
+            week,
         )
 
     return {

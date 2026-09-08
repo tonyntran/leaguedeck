@@ -49,7 +49,11 @@ function RosterList({ players }) {
             <span className="ld-pos">{player.position}</span>
             <span className="ld-nm">{player.name}</span>
             <span className="ld-tm">{player.team}</span>
-            {pts && <span className="ld-pts">{pts}</span>}
+            {/* Rendered even when empty (a non-breaking space, not "") so this
+                column always reserves its width -- otherwise the team
+                abbreviation before it would shift left/right depending on
+                whether this row has points yet. */}
+            <span className="ld-pts">{pts || ' '}</span>
           </div>
         )
       })}
@@ -208,7 +212,7 @@ export default function DashboardPage() {
                           <span className="ld-pos">{player.position}</span>
                           <span className="ld-nm">{player.name}</span>
                           <span className="ld-tm">{player.team}</span>
-                          {pts && <span className="ld-pts">{pts}</span>}
+                          <span className="ld-pts">{pts || ' '}</span>
                           <span className="ld-trend">{player.trend_count}</span>
                         </div>
                       )

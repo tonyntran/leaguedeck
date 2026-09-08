@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import httpx
 
 from app.adapters import sleeper
@@ -418,13 +416,11 @@ def test_pick_points_returns_none_when_player_has_no_entry():
     assert sleeper._pick_points(None, {"rec": 1}) is None
 
 
-def _cleanup_weekly_totals_cache(kind: str, season: str, week: int) -> None:
-    Path(f"data/sleeper_{kind}_cache_{season}_{week}.json").unlink(missing_ok=True)
-
-
-def test_get_projections_fetches_and_caches(monkeypatch):
-    season, week = "2099", 1  # distinct from other tests to avoid cache collisions
-    _cleanup_weekly_totals_cache("projections", season, week)
+def test_get_projections_fetches_and_caches(monkeypatch, tmp_path):
+    # Isolated cwd, not the real backend/data/ -- a hard test failure must
+    # not leave a stale cache file behind for a later test run to pick up.
+    monkeypatch.chdir(tmp_path)
+    season, week = "2099", 1
 
     def fake_get(url, timeout=15.0):
         assert url == f"{sleeper.SLEEPER_STATS_HOST}/projections/nfl/{season}/{week}?season_type=regular"
@@ -439,41 +435,34 @@ def test_get_projections_fetches_and_caches(monkeypatch):
         )
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    try:
-        result = sleeper.get_projections(season, week)
-        assert result == {
-            "p1": {"pts_ppr": 12.3, "pts_half_ppr": 10.1, "pts_std": 8.0},
-        }
+    result = sleeper.get_projections(season, week)
+    assert result == {
+        "p1": {"pts_ppr": 12.3, "pts_half_ppr": 10.1, "pts_std": 8.0},
+    }
 
-        # Second call must not hit the network again -- cache should serve it.
-        monkeypatch.setattr(httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not fetch")))
-        assert sleeper.get_projections(season, week) == result
-    finally:
-        _cleanup_weekly_totals_cache("projections", season, week)
+    # Second call must not hit the network again -- cache should serve it.
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not fetch")))
+    assert sleeper.get_projections(season, week) == result
 
 
-def test_get_actual_stats_fetches_from_stats_endpoint(monkeypatch):
+def test_get_actual_stats_fetches_from_stats_endpoint(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     season, week = "2099", 2
-    _cleanup_weekly_totals_cache("stats", season, week)
 
     def fake_get(url, timeout=15.0):
         assert url == f"{sleeper.SLEEPER_STATS_HOST}/stats/nfl/{season}/{week}?season_type=regular"
         return FakeResponse([{"player_id": "p1", "stats": {"pts_ppr": 22.0}}])
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    try:
-        result = sleeper.get_actual_stats(season, week)
-        assert result["p1"]["pts_ppr"] == 22.0
-    finally:
-        _cleanup_weekly_totals_cache("stats", season, week)
+    result = sleeper.get_actual_stats(season, week)
+    assert result["p1"]["pts_ppr"] == 22.0
 
 
-def test_normalize_league_includes_actual_and_projected_points(monkeypatch):
+def test_normalize_league_includes_actual_and_projected_points(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     league_id = "666"
     base = sleeper.SLEEPER_BASE_URL
     season, week = "2099", 3
-    _cleanup_weekly_totals_cache("stats", season, week)
-    _cleanup_weekly_totals_cache("projections", season, week)
 
     responses = {
         f"{base}/league/{league_id}": FakeResponse(
@@ -501,15 +490,11 @@ def test_normalize_league_includes_actual_and_projected_points(monkeypatch):
         return responses[url]
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    try:
-        result = sleeper.normalize_league(league_id, my_user_id="u1", players_map={})
-        (team,) = result["teams"]
-        player = team["roster_json"][0]
-        assert player["actual_points"] == 24.5
-        assert player["projected_points"] == 18.2
-    finally:
-        _cleanup_weekly_totals_cache("stats", season, week)
-        _cleanup_weekly_totals_cache("projections", season, week)
+    result = sleeper.normalize_league(league_id, my_user_id="u1", players_map={})
+    (team,) = result["teams"]
+    player = team["roster_json"][0]
+    assert player["actual_points"] == 24.5
+    assert player["projected_points"] == 18.2
 
 
 def test_normalize_league_survives_stats_and_projections_lookup_failure(monkeypatch):
@@ -552,11 +537,10 @@ def test_normalize_league_survives_stats_and_projections_lookup_failure(monkeypa
     assert player["projected_points"] is None
 
 
-def test_get_weekly_points_resolves_to_league_scoring_format(monkeypatch):
+def test_get_weekly_points_resolves_to_league_scoring_format(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     league_id = "888777"
     season, week = "2099", 4
-    _cleanup_weekly_totals_cache("stats", season, week)
-    _cleanup_weekly_totals_cache("projections", season, week)
 
     base = sleeper.SLEEPER_BASE_URL
     responses = {
@@ -573,10 +557,6 @@ def test_get_weekly_points_resolves_to_league_scoring_format(monkeypatch):
         return responses[url]
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    try:
-        actual_points, projected_points = sleeper.get_weekly_points(league_id, season, week)
-        assert actual_points == {"p1": 17.0}  # half-PPR, per this league's scoring_settings
-        assert projected_points == {"p1": 8.5}
-    finally:
-        _cleanup_weekly_totals_cache("stats", season, week)
-        _cleanup_weekly_totals_cache("projections", season, week)
+    actual_points, projected_points = sleeper.get_weekly_points(league_id, season, week)
+    assert actual_points == {"p1": 17.0}  # half-PPR, per this league's scoring_settings
+    assert projected_points == {"p1": 8.5}
