@@ -26,6 +26,7 @@ def list_leagues(db: Session = Depends(get_db)):
             {
                 "id": league.id,
                 "platform": league.platform,
+                "platform_league_id": league.platform_league_id,
                 "name": league.name,
                 "season": league.season,
                 "teams": [

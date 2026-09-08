@@ -43,5 +43,6 @@ def test_list_leagues_returns_seeded_data(client):
     data = resp.json()
     assert len(data) == 1
     assert data[0]["name"] == "Test League"
+    assert data[0]["platform_league_id"] == "999"
     assert data[0]["teams"][0]["roster"][0]["name"] == "Player One"
     assert data[0]["teams"][0]["opponent_name"] == "Rival"

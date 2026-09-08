@@ -135,9 +135,21 @@ export default function DashboardPage() {
             const starters = byPositionOrder(myTeam.roster.filter((p) => p.is_starter))
             const bench = byPositionOrder(myTeam.roster.filter((p) => !p.is_starter))
 
+            // Sleeper's web app resolves "/team" to the logged-in user's own
+            // team within that league — no roster_id needed. Other platforms
+            // don't have a known link target yet, so the header stays plain.
+            const teamUrl =
+              league.platform === 'sleeper' && league.platform_league_id
+                ? `https://sleeper.com/leagues/${league.platform_league_id}/team`
+                : null
+            const CardHeadTag = teamUrl ? 'a' : 'div'
+
             return (
               <article className="ld-team-card ld-mine" key={league.id}>
-                <div className="ld-card-head">
+                <CardHeadTag
+                  className="ld-card-head"
+                  {...(teamUrl ? { href: teamUrl, target: '_blank', rel: 'noopener noreferrer' } : {})}
+                >
                   <span className="ld-card-name">
                     {myTeam.name} — {league.name}
                     {myTeam.week != null ? ` (week ${myTeam.week})` : ''}
@@ -146,7 +158,7 @@ export default function DashboardPage() {
                     {myTeam.points_for} – {myTeam.opponent_points ?? '-'}
                     {myTeam.opponent_name ? ` vs ${myTeam.opponent_name}` : ''}
                   </span>
-                </div>
+                </CardHeadTag>
                 <div className="ld-lineup-section">
                   <h3 className="ld-lineup-label">Starting lineup</h3>
                   <RosterList players={starters} />

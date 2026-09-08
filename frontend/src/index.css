@@ -254,6 +254,13 @@ button {
   flex-direction: column;
   gap: 0.2rem;
   font-size: 0.92rem;
+  /* Reset link defaults for the cases where this is an <a>, not a <div> —
+     the JSX only makes it a link when a platform-specific team URL is
+     known (currently Sleeper only). */
+  text-decoration: none;
+}
+a.ld-card-head:hover {
+  text-decoration: underline;
 }
 .ld-team-card.ld-mine .ld-card-head {
   background: var(--ld-tc-mine);
