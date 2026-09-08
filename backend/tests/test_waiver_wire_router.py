@@ -11,10 +11,15 @@ def _login(client):
     client.post("/auth/login", json={"password": TEST_PASSWORD})
 
 
-def _make_league(platform="sleeper"):
+def _make_league(platform="sleeper", platform_league_id="1"):
     init_db()
     db = get_sessionmaker()()
-    league = League(platform=platform, platform_league_id="1", name="Test League", season="2026")
+    league = League(
+        platform=platform,
+        platform_league_id=platform_league_id,
+        name=f"Test League {platform_league_id}",
+        season="2026",
+    )
     db.add(league)
     db.commit()
     league_id = league.id
@@ -22,8 +27,8 @@ def _make_league(platform="sleeper"):
     return league_id
 
 
-def _seed_league_with_rosters(rosters):
-    league_id = _make_league()
+def _seed_league_with_rosters(rosters, platform_league_id="1"):
+    league_id = _make_league(platform_league_id=platform_league_id)
     db = get_sessionmaker()()
     for i, roster in enumerate(rosters):
         db.add(
@@ -130,6 +135,87 @@ def test_waiver_wire_degrades_to_empty_list_when_sleeper_fails(client, monkeypat
 
     monkeypatch.setattr(sleeper_adapter, "get_trending_adds", raise_error)
 
+    resp = client.get(f"/leagues/{league_id}/waiver-wire")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_waiver_wire_excludes_players_rostered_on_any_team_in_the_league(client, monkeypatch):
+    """"Rostered" is the union across every team in the league, not just mine —
+    a player owned by a rival is still unavailable to me."""
+    league_id = _seed_league_with_rosters(
+        [
+            [{"player_id": "mine", "name": "My Guy", "position": "RB", "team": "KC"}],
+            [{"player_id": "theirs", "name": "Rival Guy", "position": "WR", "team": "SF"}],
+        ]
+    )
+    _login(client)
+
+    monkeypatch.setattr(
+        sleeper_adapter,
+        "get_trending_adds",
+        lambda: [
+            {"player_id": "mine", "count": 300},
+            {"player_id": "theirs", "count": 200},
+            {"player_id": "free", "count": 100},
+        ],
+    )
+    monkeypatch.setattr(
+        sleeper_adapter,
+        "get_players_map",
+        lambda: {"free": {"full_name": "Free Agent", "position": "TE", "team": "BUF"}},
+    )
+
+    resp = client.get(f"/leagues/{league_id}/waiver-wire")
+    assert resp.status_code == 200
+    # "theirs" is on the *second* team; only the cross-team union excludes it.
+    assert [p["player_id"] for p in resp.json()] == ["free"]
+
+
+def test_waiver_wire_is_computed_per_league(client, monkeypatch):
+    """Availability is per-league: a player owned in league A is still a valid
+    suggestion in league B, where nobody rosters him."""
+    league_a = _seed_league_with_rosters(
+        [[{"player_id": "shared", "name": "Owned In A", "position": "QB", "team": "PHI"}]],
+        platform_league_id="A",
+    )
+    league_b = _seed_league_with_rosters([[]], platform_league_id="B")
+    _login(client)
+
+    monkeypatch.setattr(
+        sleeper_adapter, "get_trending_adds", lambda: [{"player_id": "shared", "count": 42}]
+    )
+    monkeypatch.setattr(
+        sleeper_adapter,
+        "get_players_map",
+        lambda: {"shared": {"full_name": "Shared Guy", "position": "QB", "team": "PHI"}},
+    )
+
+    assert client.get(f"/leagues/{league_a}/waiver-wire").json() == []
+    assert client.get(f"/leagues/{league_b}/waiver-wire").json() == [
+        {
+            "player_id": "shared",
+            "name": "Shared Guy",
+            "position": "QB",
+            "team": "PHI",
+            "trend_count": 42,
+        }
+    ]
+
+
+def test_waiver_wire_degrades_to_empty_list_on_malformed_trending_payload(client, monkeypatch):
+    """Sleeper returning a shape we don't expect (here an error dict, then an
+    entry missing "count") must degrade to [], not 500."""
+    league_id = _seed_league_with_rosters([[]])
+    _login(client)
+    monkeypatch.setattr(sleeper_adapter, "get_players_map", lambda: {})
+
+    monkeypatch.setattr(sleeper_adapter, "get_trending_adds", lambda: {"error": "rate limited"})
+    resp = client.get(f"/leagues/{league_id}/waiver-wire")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    monkeypatch.setattr(sleeper_adapter, "get_trending_adds", lambda: [{"player_id": "p1"}])
     resp = client.get(f"/leagues/{league_id}/waiver-wire")
     assert resp.status_code == 200
     assert resp.json() == []

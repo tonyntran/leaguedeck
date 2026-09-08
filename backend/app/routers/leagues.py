@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,8 @@ from app.auth import require_auth
 from app.db import get_db
 from app.models import League, SyncLog, Team
 from app.sync import sync_all_platforms
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/leagues", tags=["leagues"], dependencies=[Depends(require_auth)])
 
@@ -53,30 +56,35 @@ def get_waiver_wire(league_id: int, db: Session = Depends(get_db)):
     if not teams:
         return []
 
-    rostered_ids = {
-        player["player_id"] for team in teams for player in json.loads(team.roster_json)
-    }
-
+    # Everything below is inside one try: not just the two Sleeper calls, but
+    # also consuming their results. A malformed trending payload (a dict
+    # instead of a list, an entry missing "count") would otherwise raise a
+    # TypeError/KeyError *outside* the guard and 500 the request, which is
+    # exactly what this endpoint promises never to do.
     try:
+        rostered_ids = {
+            player["player_id"] for team in teams for player in json.loads(team.roster_json)
+        }
         trending = sleeper.get_trending_adds()
         players_map = sleeper.get_players_map()
+        available = [
+            {
+                "player_id": t["player_id"],
+                "name": players_map.get(t["player_id"], {}).get("full_name", t["player_id"]),
+                "position": players_map.get(t["player_id"], {}).get("position"),
+                "team": players_map.get(t["player_id"], {}).get("team"),
+                "trend_count": t["count"],
+            }
+            for t in trending
+            if t["player_id"] not in rostered_ids
+        ]
+        return sorted(available, key=lambda p: p["trend_count"], reverse=True)
     except Exception:
         # A Sleeper hiccup on this nice-to-have feature shouldn't read as a
-        # broken dashboard — degrade to no suggestions rather than a 500.
+        # broken dashboard — degrade to no suggestions rather than a 500. Log
+        # it, though: a silent [] is indistinguishable from "nothing trending".
+        logger.exception("waiver wire: sleeper lookup failed for league %s", league_id)
         return []
-
-    available = [
-        {
-            "player_id": t["player_id"],
-            "name": players_map.get(t["player_id"], {}).get("full_name", t["player_id"]),
-            "position": players_map.get(t["player_id"], {}).get("position"),
-            "team": players_map.get(t["player_id"], {}).get("team"),
-            "trend_count": t["count"],
-        }
-        for t in trending
-        if t["player_id"] not in rostered_ids
-    ]
-    return sorted(available, key=lambda p: p["trend_count"], reverse=True)
 
 
 sync_status_router = APIRouter(

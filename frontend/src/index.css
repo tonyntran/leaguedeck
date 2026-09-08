@@ -338,8 +338,17 @@ button {
   font-size: 0.72rem;
   flex-shrink: 0;
   color: var(--ld-tc-score);
-  width: 2.4rem;
+  /* min-width, not width: the card is overflow:hidden, so a 5-6 digit
+     trending count would be clipped rather than allowed to grow. */
+  min-width: 2.4rem;
   text-align: right;
+}
+
+/* .ld-status carries full-page padding for its original use. Inside a lineup
+   section (which already has its own padding) that reads as a stray indent
+   next to the player rows, so zero it out in that context. */
+.ld-lineup-section .ld-status {
+  padding: 0;
 }
 
 .ld-settings-form {

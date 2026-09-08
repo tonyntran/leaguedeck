@@ -162,7 +162,11 @@ export default function DashboardPage() {
                   ) : waiverWire[league.id].length === 0 ? (
                     <p className="ld-status">No trending players available right now.</p>
                   ) : (
-                    waiverWire[league.id].map((player) => (
+                    /* Display cap: the backend returns up to 25 trending adds
+                       and typically 10-18 survive the rostered filter, which
+                       would make this the tallest section on the card. Purely
+                       a display concern — the response shape is unchanged. */
+                    waiverWire[league.id].slice(0, 10).map((player) => (
                       <div className="ld-waiver-row" key={player.player_id}>
                         <span className="ld-pos">{player.position}</span>
                         <span className="ld-nm">{player.name}</span>
