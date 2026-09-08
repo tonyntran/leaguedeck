@@ -83,6 +83,7 @@ def test_normalize_league_builds_teams_with_mapped_position_and_team(monkeypatch
         assert ("view", "mRoster") in params
         assert ("view", "mMatchup") in params
         assert ("view", "mSettings") in params
+        assert ("view", "mMatchupScore") in params
         return FakeResponse(_combined_response())
 
     monkeypatch.setattr(httpx, "get", fake_get)
@@ -109,6 +110,8 @@ def test_normalize_league_builds_teams_with_mapped_position_and_team(monkeypatch
         "position": "RB",
         "team": "KC",
         "is_starter": True,
+        "actual_points": None,
+        "projected_points": None,
     }
     bench = next(p for p in my_team["roster_json"] if p["player_id"] == "222")
     assert bench["position"] == "WR"
@@ -234,3 +237,61 @@ def test_normalize_league_falls_back_to_player_id_when_name_missing(monkeypatch)
     assert player["name"] == "555"
     assert player["position"] == "K"
     assert player["team"] is None  # unknown proTeamId (99) also falls back to None
+
+
+def _stats_entry(**overrides):
+    base = {
+        "seasonId": 2026,
+        "scoringPeriodId": 3,
+        "statSourceId": 0,
+        "statSplitTypeId": 1,
+        "appliedTotal": 0.0,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_normalize_league_extracts_actual_and_projected_points(monkeypatch):
+    response = _combined_response()
+    response["teams"][0]["roster"]["entries"][0]["playerPoolEntry"]["player"]["stats"] = [
+        _stats_entry(statSourceId=0, appliedTotal=24.5),  # actual
+        _stats_entry(statSourceId=1, appliedTotal=18.2),  # projected
+    ]
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: FakeResponse(response))
+
+    result = espn.normalize_league("999", 2026, "s2val", "{ABC-123}")
+    my_team = next(t for t in result["teams"] if t["is_mine"])
+    player = next(p for p in my_team["roster_json"] if p["player_id"] == "111")
+    assert player["actual_points"] == 24.5
+    assert player["projected_points"] == 18.2
+
+
+def test_normalize_league_ignores_season_total_and_wrong_week_stats_entries(monkeypatch):
+    """A player's stats array can carry season-aggregate rows (statSplitTypeId
+    == 2) and other weeks' entries alongside the current week's -- only the
+    current week's per-source entry should be picked."""
+    response = _combined_response()
+    response["teams"][0]["roster"]["entries"][0]["playerPoolEntry"]["player"]["stats"] = [
+        _stats_entry(statSourceId=1, statSplitTypeId=2, appliedTotal=999.0),  # season total, skip
+        _stats_entry(statSourceId=1, scoringPeriodId=2, appliedTotal=5.0),  # wrong week, skip
+        _stats_entry(statSourceId=1, seasonId=2025, appliedTotal=7.0),  # wrong season, skip
+        _stats_entry(statSourceId=1, appliedTotal=18.2),  # the real one
+    ]
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: FakeResponse(response))
+
+    result = espn.normalize_league("999", 2026, "s2val", "{ABC-123}")
+    my_team = next(t for t in result["teams"] if t["is_mine"])
+    player = next(p for p in my_team["roster_json"] if p["player_id"] == "111")
+    assert player["projected_points"] == 18.2
+
+
+def test_normalize_league_defaults_points_to_none_when_stats_missing(monkeypatch):
+    """No `stats` key at all (e.g. a player who hasn't been assigned stats
+    yet) must not crash -- both totals default to None."""
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: FakeResponse(_combined_response()))
+
+    result = espn.normalize_league("999", 2026, "s2val", "{ABC-123}")
+    my_team = next(t for t in result["teams"] if t["is_mine"])
+    player = next(p for p in my_team["roster_json"] if p["player_id"] == "111")
+    assert player["actual_points"] is None
+    assert player["projected_points"] is None

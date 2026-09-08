@@ -27,7 +27,7 @@ def _make_league(platform="sleeper", platform_league_id="1"):
     return league_id
 
 
-def _seed_league_with_rosters(rosters, platform_league_id="1"):
+def _seed_league_with_rosters(rosters, platform_league_id="1", week=None):
     league_id = _make_league(platform_league_id=platform_league_id)
     db = get_sessionmaker()()
     for i, roster in enumerate(rosters):
@@ -39,6 +39,7 @@ def _seed_league_with_rosters(rosters, platform_league_id="1"):
                 is_mine=(i == 0),
                 roster_json=json.dumps(roster),
                 points_for=0.0,
+                week=week,
             )
         )
     db.commit()
@@ -92,7 +93,15 @@ def test_waiver_wire_excludes_already_rostered_players(client, monkeypatch):
     resp = client.get(f"/leagues/{league_id}/waiver-wire")
     assert resp.status_code == 200
     assert resp.json() == [
-        {"player_id": "p2", "name": "Free Agent", "position": "WR", "team": "SF", "trend_count": 50}
+        {
+            "player_id": "p2",
+            "name": "Free Agent",
+            "position": "WR",
+            "team": "SF",
+            "trend_count": 50,
+            "actual_points": None,
+            "projected_points": None,
+        }
     ]
 
 
@@ -122,7 +131,15 @@ def test_waiver_wire_falls_back_to_raw_id_for_unknown_player(client, monkeypatch
 
     resp = client.get(f"/leagues/{league_id}/waiver-wire")
     assert resp.json() == [
-        {"player_id": "mystery", "name": "mystery", "position": None, "team": None, "trend_count": 1}
+        {
+            "player_id": "mystery",
+            "name": "mystery",
+            "position": None,
+            "team": None,
+            "trend_count": 1,
+            "actual_points": None,
+            "projected_points": None,
+        }
     ]
 
 
@@ -199,6 +216,8 @@ def test_waiver_wire_is_computed_per_league(client, monkeypatch):
             "position": "QB",
             "team": "PHI",
             "trend_count": 42,
+            "actual_points": None,
+            "projected_points": None,
         }
     ]
 
@@ -219,3 +238,73 @@ def test_waiver_wire_degrades_to_empty_list_on_malformed_trending_payload(client
     resp = client.get(f"/leagues/{league_id}/waiver-wire")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+def test_waiver_wire_includes_points_once_a_week_is_known(client, monkeypatch):
+    """Once at least one team has synced (so a current week is known),
+    trending players get actual/projected points too."""
+    league_id = _seed_league_with_rosters([[]], week=5)
+    _login(client)
+
+    monkeypatch.setattr(
+        sleeper_adapter, "get_trending_adds", lambda: [{"player_id": "p1", "count": 10}]
+    )
+    monkeypatch.setattr(
+        sleeper_adapter,
+        "get_players_map",
+        lambda: {"p1": {"full_name": "Hot Pickup", "position": "WR", "team": "MIA"}},
+    )
+    monkeypatch.setattr(
+        sleeper_adapter,
+        "get_weekly_points",
+        lambda league_id, season, week: ({"p1": 12.5}, {"p1": 9.0}),
+    )
+
+    resp = client.get(f"/leagues/{league_id}/waiver-wire")
+    assert resp.status_code == 200
+    assert resp.json() == [
+        {
+            "player_id": "p1",
+            "name": "Hot Pickup",
+            "position": "WR",
+            "team": "MIA",
+            "trend_count": 10,
+            "actual_points": 12.5,
+            "projected_points": 9.0,
+        }
+    ]
+
+
+def test_waiver_wire_degrades_to_no_points_when_weekly_points_lookup_fails(client, monkeypatch):
+    """A hiccup on the points lookup shouldn't take down the whole waiver
+    wire -- trending suggestions still show, just without point totals."""
+    league_id = _seed_league_with_rosters([[]], week=5)
+    _login(client)
+
+    monkeypatch.setattr(
+        sleeper_adapter, "get_trending_adds", lambda: [{"player_id": "p1", "count": 10}]
+    )
+    monkeypatch.setattr(
+        sleeper_adapter,
+        "get_players_map",
+        lambda: {"p1": {"full_name": "Hot Pickup", "position": "WR", "team": "MIA"}},
+    )
+
+    def raise_error(league_id, season, week):
+        raise RuntimeError("undocumented host is down")
+
+    monkeypatch.setattr(sleeper_adapter, "get_weekly_points", raise_error)
+
+    resp = client.get(f"/leagues/{league_id}/waiver-wire")
+    assert resp.status_code == 200
+    assert resp.json() == [
+        {
+            "player_id": "p1",
+            "name": "Hot Pickup",
+            "position": "WR",
+            "team": "MIA",
+            "trend_count": 10,
+            "actual_points": None,
+            "projected_points": None,
+        }
+    ]

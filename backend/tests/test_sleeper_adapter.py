@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import httpx
 
 from app.adapters import sleeper
@@ -66,7 +68,15 @@ def test_normalize_league_builds_teams_with_opponent_and_roster(monkeypatch):
     assert my_team["opponent_name"] == "Rival"
     assert my_team["opponent_points"] == 90.2
     assert my_team["roster_json"] == [
-        {"player_id": "p1", "name": "Player One", "position": "RB", "team": "KC", "is_starter": False}
+        {
+            "player_id": "p1",
+            "name": "Player One",
+            "position": "RB",
+            "team": "KC",
+            "is_starter": False,
+            "actual_points": None,
+            "projected_points": None,
+        }
     ]
 
 
@@ -151,6 +161,8 @@ def test_normalize_league_pairs_opponents_by_matchup_id_not_list_order(monkeypat
         "position": None,
         "team": None,
         "is_starter": False,
+        "actual_points": None,
+        "projected_points": None,
     }
     assert by_id["4"]["roster_json"] == []
 
@@ -384,3 +396,187 @@ def test_get_trending_adds_honors_custom_params(monkeypatch):
     monkeypatch.setattr(httpx, "get", fake_get)
     result = sleeper.get_trending_adds(lookback_hours=48, limit=10)
     assert result == []
+
+
+def test_pick_points_uses_ppr_when_league_is_full_ppr():
+    totals = {"pts_ppr": 20.0, "pts_half_ppr": 15.0, "pts_std": 10.0}
+    assert sleeper._pick_points(totals, {"rec": 1}) == 20.0
+
+
+def test_pick_points_uses_half_ppr_when_league_is_half_ppr():
+    totals = {"pts_ppr": 20.0, "pts_half_ppr": 15.0, "pts_std": 10.0}
+    assert sleeper._pick_points(totals, {"rec": 0.5}) == 15.0
+
+
+def test_pick_points_uses_std_when_league_has_no_reception_points():
+    totals = {"pts_ppr": 20.0, "pts_half_ppr": 15.0, "pts_std": 10.0}
+    assert sleeper._pick_points(totals, {"rec": 0}) == 10.0
+    assert sleeper._pick_points(totals, {}) == 10.0  # missing key defaults like standard
+
+
+def test_pick_points_returns_none_when_player_has_no_entry():
+    assert sleeper._pick_points(None, {"rec": 1}) is None
+
+
+def _cleanup_weekly_totals_cache(kind: str, season: str, week: int) -> None:
+    Path(f"data/sleeper_{kind}_cache_{season}_{week}.json").unlink(missing_ok=True)
+
+
+def test_get_projections_fetches_and_caches(monkeypatch):
+    season, week = "2099", 1  # distinct from other tests to avoid cache collisions
+    _cleanup_weekly_totals_cache("projections", season, week)
+
+    def fake_get(url, timeout=15.0):
+        assert url == f"{sleeper.SLEEPER_STATS_HOST}/projections/nfl/{season}/{week}?season_type=regular"
+        return FakeResponse(
+            [
+                {
+                    "player_id": "p1",
+                    "stats": {"pts_ppr": 12.3, "pts_half_ppr": 10.1, "pts_std": 8.0},
+                },
+                {"player_id": None, "stats": {"pts_ppr": 5.0}},  # must be skipped
+            ]
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    try:
+        result = sleeper.get_projections(season, week)
+        assert result == {
+            "p1": {"pts_ppr": 12.3, "pts_half_ppr": 10.1, "pts_std": 8.0},
+        }
+
+        # Second call must not hit the network again -- cache should serve it.
+        monkeypatch.setattr(httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not fetch")))
+        assert sleeper.get_projections(season, week) == result
+    finally:
+        _cleanup_weekly_totals_cache("projections", season, week)
+
+
+def test_get_actual_stats_fetches_from_stats_endpoint(monkeypatch):
+    season, week = "2099", 2
+    _cleanup_weekly_totals_cache("stats", season, week)
+
+    def fake_get(url, timeout=15.0):
+        assert url == f"{sleeper.SLEEPER_STATS_HOST}/stats/nfl/{season}/{week}?season_type=regular"
+        return FakeResponse([{"player_id": "p1", "stats": {"pts_ppr": 22.0}}])
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    try:
+        result = sleeper.get_actual_stats(season, week)
+        assert result["p1"]["pts_ppr"] == 22.0
+    finally:
+        _cleanup_weekly_totals_cache("stats", season, week)
+
+
+def test_normalize_league_includes_actual_and_projected_points(monkeypatch):
+    league_id = "666"
+    base = sleeper.SLEEPER_BASE_URL
+    season, week = "2099", 3
+    _cleanup_weekly_totals_cache("stats", season, week)
+    _cleanup_weekly_totals_cache("projections", season, week)
+
+    responses = {
+        f"{base}/league/{league_id}": FakeResponse(
+            {
+                "name": "Points League",
+                "season": season,
+                "settings": {"leg": week},
+                "scoring_settings": {"rec": 1},
+            }
+        ),
+        f"{base}/league/{league_id}/rosters": FakeResponse(
+            [{"roster_id": 1, "owner_id": "u1", "players": ["p1"]}]
+        ),
+        f"{base}/league/{league_id}/users": FakeResponse(
+            [{"user_id": "u1", "display_name": "Me", "metadata": {}}]
+        ),
+        f"{base}/league/{league_id}/matchups/{week}": FakeResponse([]),
+    }
+    stats_url = f"{sleeper.SLEEPER_STATS_HOST}/stats/nfl/{season}/{week}?season_type=regular"
+    proj_url = f"{sleeper.SLEEPER_STATS_HOST}/projections/nfl/{season}/{week}?season_type=regular"
+    responses[stats_url] = FakeResponse([{"player_id": "p1", "stats": {"pts_ppr": 24.5}}])
+    responses[proj_url] = FakeResponse([{"player_id": "p1", "stats": {"pts_ppr": 18.2}}])
+
+    def fake_get(url, timeout=10.0):
+        return responses[url]
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    try:
+        result = sleeper.normalize_league(league_id, my_user_id="u1", players_map={})
+        (team,) = result["teams"]
+        player = team["roster_json"][0]
+        assert player["actual_points"] == 24.5
+        assert player["projected_points"] == 18.2
+    finally:
+        _cleanup_weekly_totals_cache("stats", season, week)
+        _cleanup_weekly_totals_cache("projections", season, week)
+
+
+def test_normalize_league_survives_stats_and_projections_lookup_failure(monkeypatch):
+    """A hiccup on the undocumented stats/projections host must degrade to
+    no actual/projected points, not fail the whole league sync -- roster,
+    score, and opponent data must still come through."""
+    league_id = "667"
+    base = sleeper.SLEEPER_BASE_URL
+    responses = {
+        f"{base}/league/{league_id}": FakeResponse(
+            {"name": "Resilient League", "season": "2026", "settings": {"leg": 1}}
+        ),
+        f"{base}/league/{league_id}/rosters": FakeResponse(
+            [{"roster_id": 1, "owner_id": "u1", "players": ["p1"]}]
+        ),
+        f"{base}/league/{league_id}/users": FakeResponse(
+            [{"user_id": "u1", "display_name": "Me", "metadata": {}}]
+        ),
+        f"{base}/league/{league_id}/matchups/1": FakeResponse(
+            [{"roster_id": 1, "matchup_id": None, "points": 42.0}]
+        ),
+    }
+
+    def fake_get(url, timeout=10.0):
+        return responses[url]
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(
+        sleeper, "get_actual_stats", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("host down"))
+    )
+    monkeypatch.setattr(
+        sleeper, "get_projections", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("host down"))
+    )
+
+    result = sleeper.normalize_league(league_id, my_user_id="u1", players_map={})  # must not raise
+    (team,) = result["teams"]
+    assert team["points_for"] == 42.0
+    player = team["roster_json"][0]
+    assert player["actual_points"] is None
+    assert player["projected_points"] is None
+
+
+def test_get_weekly_points_resolves_to_league_scoring_format(monkeypatch):
+    league_id = "888777"
+    season, week = "2099", 4
+    _cleanup_weekly_totals_cache("stats", season, week)
+    _cleanup_weekly_totals_cache("projections", season, week)
+
+    base = sleeper.SLEEPER_BASE_URL
+    responses = {
+        f"{base}/league/{league_id}": FakeResponse({"scoring_settings": {"rec": 0.5}}),
+        f"{sleeper.SLEEPER_STATS_HOST}/stats/nfl/{season}/{week}?season_type=regular": FakeResponse(
+            [{"player_id": "p1", "stats": {"pts_ppr": 20.0, "pts_half_ppr": 17.0, "pts_std": 14.0}}]
+        ),
+        f"{sleeper.SLEEPER_STATS_HOST}/projections/nfl/{season}/{week}?season_type=regular": FakeResponse(
+            [{"player_id": "p1", "stats": {"pts_ppr": 10.0, "pts_half_ppr": 8.5, "pts_std": 7.0}}]
+        ),
+    }
+
+    def fake_get(url, timeout=10.0):
+        return responses[url]
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    try:
+        actual_points, projected_points = sleeper.get_weekly_points(league_id, season, week)
+        assert actual_points == {"p1": 17.0}  # half-PPR, per this league's scoring_settings
+        assert projected_points == {"p1": 8.5}
+    finally:
+        _cleanup_weekly_totals_cache("stats", season, week)
+        _cleanup_weekly_totals_cache("projections", season, week)

@@ -1,12 +1,24 @@
 import json
+import logging
 import time
 from pathlib import Path
 
 import httpx
 
+logger = logging.getLogger(__name__)
+
 SLEEPER_BASE_URL = "https://api.sleeper.app/v1"
 PLAYERS_CACHE_PATH = Path("data/sleeper_players_cache.json")
 PLAYERS_CACHE_MAX_AGE_SECONDS = 24 * 60 * 60  # Sleeper asks this endpoint not be hit often
+
+# Actual stats and projections live on an entirely different, undocumented
+# host than the rest of this adapter's documented api.sleeper.app/v1 base --
+# a real fragility step up, accepted knowingly since neither has an official
+# alternative. Cached briefly (not 24h like PLAYERS_CACHE) since both the
+# 20-minute sync and every waiver-wire page load can trigger a fetch, and
+# projections/stats shift meaningfully during the week.
+SLEEPER_STATS_HOST = "https://api.sleeper.com"
+WEEKLY_TOTALS_CACHE_MAX_AGE_SECONDS = 60 * 60
 
 
 class SleeperAdapterError(Exception):
@@ -61,6 +73,69 @@ def get_players_map() -> dict:
     return players_map
 
 
+def _fetch_weekly_totals(kind: str, season: str, week: int) -> dict:
+    """kind is "stats" (actual, already-played performance) or "projections"
+    (pre-game estimate). Both live on SLEEPER_STATS_HOST and share the same
+    list-of-entries shape: each entry has a player_id and a `stats` sub-dict
+    with pre-computed pts_ppr/pts_half_ppr/pts_std totals -- verified live
+    against the real (undocumented) endpoints during development."""
+    cache_path = Path(f"data/sleeper_{kind}_cache_{season}_{week}.json")
+    if cache_path.exists():
+        age = time.time() - cache_path.stat().st_mtime
+        if age < WEEKLY_TOTALS_CACHE_MAX_AGE_SECONDS:
+            return json.loads(cache_path.read_text())
+
+    resp = httpx.get(
+        f"{SLEEPER_STATS_HOST}/{kind}/nfl/{season}/{week}?season_type=regular",
+        timeout=15.0,
+    )
+    resp.raise_for_status()
+    raw = resp.json()
+    totals = {
+        entry["player_id"]: {
+            "pts_ppr": (entry.get("stats") or {}).get("pts_ppr"),
+            "pts_half_ppr": (entry.get("stats") or {}).get("pts_half_ppr"),
+            "pts_std": (entry.get("stats") or {}).get("pts_std"),
+        }
+        for entry in raw
+        if entry.get("player_id")
+    }
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(totals))
+    return totals
+
+
+def get_actual_stats(season: str, week: int) -> dict:
+    """Returns {player_id: {"pts_ppr", "pts_half_ppr", "pts_std"}} for
+    already-played performance in the given week."""
+    return _fetch_weekly_totals("stats", season, week)
+
+
+def get_projections(season: str, week: int) -> dict:
+    """Returns {player_id: {"pts_ppr", "pts_half_ppr", "pts_std"}} for
+    pre-game estimates in the given week."""
+    return _fetch_weekly_totals("projections", season, week)
+
+
+def _pick_points(totals_entry: dict | None, scoring_settings: dict) -> float | None:
+    """Sleeper's stats/projections endpoints return three pre-computed point
+    totals (PPR/half-PPR/standard) rather than raw stat categories, so
+    instead of reimplementing Sleeper's full scoring formula this picks
+    whichever matches the league's own reception-point value -- exact for
+    standard PPR/half-PPR/standard leagues, approximate for anyone with more
+    heavily customized scoring (bonus points, TE premium, etc.) -- an
+    accepted, named cost like the other cross-platform approximations
+    already in this app."""
+    if not totals_entry:
+        return None
+    rec_points = scoring_settings.get("rec", 0)
+    if rec_points >= 1:
+        return totals_entry.get("pts_ppr")
+    if rec_points >= 0.5:
+        return totals_entry.get("pts_half_ppr")
+    return totals_entry.get("pts_std")
+
+
 def _get_league(league_id: str) -> dict:
     resp = httpx.get(f"{SLEEPER_BASE_URL}/league/{league_id}", timeout=10.0)
     resp.raise_for_status()
@@ -85,6 +160,20 @@ def _get_matchups(league_id: str, week: int) -> list[dict]:
     return resp.json()
 
 
+def get_weekly_points(league_id: str, season: str, week: int) -> tuple[dict, dict]:
+    """Returns (actual_points, projected_points), each {player_id: float |
+    None}, already resolved to this league's own scoring format. Used by the
+    waiver-wire endpoint, which (unlike normalize_league) doesn't otherwise
+    fetch this league's data or scoring settings."""
+    scoring_settings = _get_league(league_id).get("scoring_settings") or {}
+    actual = get_actual_stats(season, week)
+    projected = get_projections(season, week)
+    return (
+        {pid: _pick_points(totals, scoring_settings) for pid, totals in actual.items()},
+        {pid: _pick_points(totals, scoring_settings) for pid, totals in projected.items()},
+    )
+
+
 def _team_name_of(owner: dict) -> str | None:
     """Preferred display name for a league member: their custom team name if set,
     else their Sleeper display name. Sleeper sends `metadata: null` (not an absent
@@ -100,6 +189,22 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
     users = _get_league_users(league_id)
     week = league_data["settings"]["leg"]  # Sleeper's name for "current week"
     matchups = _get_matchups(league_id, week)
+    scoring_settings = league_data.get("scoring_settings") or {}
+
+    # A hiccup on the undocumented stats/projections host is a "nice to
+    # have" feature failing, not a reason to fail the whole league sync --
+    # degrade to no actual/projected points rather than losing roster,
+    # score, and opponent data over it.
+    try:
+        actual_stats = get_actual_stats(league_data["season"], week)
+    except Exception:
+        logger.exception("sleeper: actual stats lookup failed for league %s week %s", league_id, week)
+        actual_stats = {}
+    try:
+        projections = get_projections(league_data["season"], week)
+    except Exception:
+        logger.exception("sleeper: projections lookup failed for league %s week %s", league_id, week)
+        projections = {}
 
     users_by_id = {u["user_id"]: u for u in users}
     matchups_by_roster_id = {m["roster_id"]: m for m in matchups}
@@ -147,6 +252,8 @@ def normalize_league(league_id: str, my_user_id: str, players_map: dict) -> dict
                 "position": players_map.get(pid, {}).get("position"),
                 "team": players_map.get(pid, {}).get("team"),
                 "is_starter": pid in starter_ids,
+                "actual_points": _pick_points(actual_stats.get(pid), scoring_settings),
+                "projected_points": _pick_points(projections.get(pid), scoring_settings),
             }
             for pid in (roster.get("players") or [])
         ]

@@ -69,6 +69,24 @@ def get_waiver_wire(league_id: int, db: Session = Depends(get_db)):
         }
         trending = sleeper.get_trending_adds()
         players_map = sleeper.get_players_map()
+
+        # Actual/projected points need this week, which isn't known until at
+        # least one team has synced -- a brand-new, not-yet-synced league has
+        # no week on any Team row yet. Degrading to no points here (rather
+        # than failing the request) matches this endpoint's existing
+        # best-effort philosophy for every other Sleeper lookup below.
+        week = next((t.week for t in teams if t.week is not None), None)
+        actual_points, projected_points = {}, {}
+        if week is not None:
+            try:
+                actual_points, projected_points = sleeper.get_weekly_points(
+                    league.platform_league_id, league.season, week
+                )
+            except Exception:
+                logger.exception(
+                    "waiver wire: weekly points lookup failed for league %s", league_id
+                )
+
         available = [
             {
                 "player_id": t["player_id"],
@@ -76,6 +94,8 @@ def get_waiver_wire(league_id: int, db: Session = Depends(get_db)):
                 "position": players_map.get(t["player_id"], {}).get("position"),
                 "team": players_map.get(t["player_id"], {}).get("team"),
                 "trend_count": t["count"],
+                "actual_points": actual_points.get(t["player_id"]),
+                "projected_points": projected_points.get(t["player_id"]),
             }
             for t in trending
             if t["player_id"] not in rostered_ids

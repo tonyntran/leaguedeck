@@ -55,6 +55,10 @@ def _get_combined_view(league_id: str, season: int, espn_s2: str, swid: str) -> 
             ("view", "mRoster"),
             ("view", "mMatchup"),
             ("view", "mSettings"),
+            # Unlocks each roster entry's player.stats array (actual and
+            # projected per-player point totals) -- mRoster alone does not
+            # carry it.
+            ("view", "mMatchupScore"),
         ],
         cookies={"espn_s2": espn_s2, "SWID": _canonical_swid_cookie(swid)},
         timeout=10.0,
@@ -68,6 +72,31 @@ def _team_display_name(team: dict) -> str:
     if name:
         return name
     return f"{team.get('location', '')} {team.get('nickname', '')}".strip()
+
+
+ACTUAL_STAT_SOURCE_ID = 0
+PROJECTED_STAT_SOURCE_ID = 1
+SEASON_TOTAL_SPLIT_TYPE_ID = 2  # a season-aggregate row, not a single week's
+
+
+def _stat_total(stats_entries: list[dict], season: int, week: int, source_id: int) -> float | None:
+    """Finds this week's actual (source_id=0) or projected (source_id=1)
+    point total in a player's `stats` array. Each entry covers one
+    season/week/source combination; `appliedTotal` is ESPN's own computed
+    fantasy-point total for that combination, already reflecting this
+    league's real scoring settings -- no approximation needed here, unlike
+    the Sleeper side."""
+    for entry in stats_entries:
+        if entry.get("seasonId") != season:
+            continue
+        if entry.get("statSplitTypeId") == SEASON_TOTAL_SPLIT_TYPE_ID:
+            continue
+        if entry.get("scoringPeriodId") != week:
+            continue
+        if entry.get("statSourceId") != source_id:
+            continue
+        return entry.get("appliedTotal")
+    return None
 
 
 def _team_score(schedule: list[dict], week: int, team_id: int):
@@ -119,6 +148,7 @@ def normalize_league(league_id: str, season: int, espn_s2: str, swid: str) -> di
             player = (entry.get("playerPoolEntry") or {}).get("player") or {}
             slot_id = entry.get("lineupSlotId")
             player_id = str(player.get("id"))
+            stats_entries = player.get("stats") or []
             roster_players.append(
                 {
                     "player_id": player_id,
@@ -126,6 +156,10 @@ def normalize_league(league_id: str, season: int, espn_s2: str, swid: str) -> di
                     "position": POSITION_MAP.get(player.get("defaultPositionId")),
                     "team": PRO_TEAM_MAP.get(player.get("proTeamId")),
                     "is_starter": slot_id not in (BENCH_SLOT_ID, IR_SLOT_ID),
+                    "actual_points": _stat_total(stats_entries, season, week, ACTUAL_STAT_SOURCE_ID),
+                    "projected_points": _stat_total(
+                        stats_entries, season, week, PROJECTED_STAT_SOURCE_ID
+                    ),
                 }
             )
 
