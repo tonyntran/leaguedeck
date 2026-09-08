@@ -8,7 +8,7 @@ from app.db import init_db
 from app.routers import auth as auth_router
 from app.routers import leagues as leagues_router
 from app.routers import settings as settings_router
-from app.sync import sync_all_platforms
+from app.sync import sync_all_platforms, sync_all_platforms_during_live_window
 
 scheduler = BackgroundScheduler()
 
@@ -22,6 +22,16 @@ async def lifespan(app: FastAPI):
             "interval",
             minutes=20,
             id="sync_all_platforms",
+            replace_existing=True,
+        )
+        # A second, independent job -- outside a likely-live game window
+        # this is a no-op (see sync.py), so it adds no load the rest of
+        # the time. The 20-minute job above keeps running regardless.
+        scheduler.add_job(
+            sync_all_platforms_during_live_window,
+            "interval",
+            seconds=60,
+            id="sync_all_platforms_during_live_window",
             replace_existing=True,
         )
         scheduler.start()

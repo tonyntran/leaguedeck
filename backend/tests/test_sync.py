@@ -1,7 +1,12 @@
+from datetime import datetime, timezone as tz
+from zoneinfo import ZoneInfo
+
 from app.adapters import sleeper as sleeper_adapter
 from app.db import get_sessionmaker, init_db
 from app.models import AppSetting, League, Team
-from app.sync import sync_sleeper
+from app.sync import _is_likely_live_window, sync_all_platforms_during_live_window, sync_sleeper
+
+ET = ZoneInfo("America/New_York")
 
 
 def test_sync_sleeper_creates_league_and_teams(monkeypatch):
@@ -213,3 +218,72 @@ def test_sync_sleeper_writes_no_synclog_when_unconfigured():
 
     assert db.query(SyncLog).filter(SyncLog.platform == "sleeper").count() == 0
     db.close()
+
+
+def test_is_likely_live_window_true_during_sunday_afternoon():
+    assert _is_likely_live_window(datetime(2026, 10, 4, 14, 0, tzinfo=ET)) is True
+
+
+def test_is_likely_live_window_true_during_thursday_night():
+    assert _is_likely_live_window(datetime(2026, 10, 1, 20, 30, tzinfo=ET)) is True
+
+
+def test_is_likely_live_window_true_during_monday_night():
+    assert _is_likely_live_window(datetime(2026, 10, 5, 21, 0, tzinfo=ET)) is True
+
+
+def test_is_likely_live_window_false_on_tuesday():
+    """Same hour as Monday Night Football, but the wrong day."""
+    assert _is_likely_live_window(datetime(2026, 10, 6, 20, 0, tzinfo=ET)) is False
+
+
+def test_is_likely_live_window_false_before_kickoff_window():
+    assert _is_likely_live_window(datetime(2026, 10, 4, 11, 0, tzinfo=ET)) is False
+
+
+def test_is_likely_live_window_false_after_window_ends():
+    """Just after Monday Night Football would have ended, past midnight --
+    a new weekday (Tuesday), so no window covers it."""
+    assert _is_likely_live_window(datetime(2026, 10, 6, 0, 30, tzinfo=ET)) is False
+
+
+def test_is_likely_live_window_false_outside_season():
+    """Same weekday and hour as a real Sunday window, but July -- no NFL."""
+    assert _is_likely_live_window(datetime(2026, 7, 5, 14, 0, tzinfo=ET)) is False
+
+
+def test_is_likely_live_window_true_during_february_playoffs():
+    assert _is_likely_live_window(datetime(2026, 2, 1, 18, 0, tzinfo=ET)) is True
+
+
+def test_is_likely_live_window_converts_from_utc():
+    """A UTC timestamp must be converted to ET before the day/hour check --
+    comparing UTC's weekday/hour directly would misjudge the window
+    whenever it straddles midnight UTC."""
+    # Monday 2026-10-05 01:00 UTC == Sunday 2026-10-04 21:00 EDT (UTC-4)
+    utc_dt = datetime(2026, 10, 5, 1, 0, tzinfo=tz.utc)
+    assert _is_likely_live_window(utc_dt) is True
+
+
+def test_sync_all_platforms_during_live_window_calls_sync_when_live(monkeypatch):
+    from app import sync as sync_module
+
+    calls = []
+    monkeypatch.setattr(sync_module, "_is_likely_live_window", lambda: True)
+    monkeypatch.setattr(sync_module, "sync_all_platforms", lambda: calls.append("synced"))
+
+    sync_all_platforms_during_live_window()
+
+    assert calls == ["synced"]
+
+
+def test_sync_all_platforms_during_live_window_skips_sync_when_not_live(monkeypatch):
+    from app import sync as sync_module
+
+    calls = []
+    monkeypatch.setattr(sync_module, "_is_likely_live_window", lambda: False)
+    monkeypatch.setattr(sync_module, "sync_all_platforms", lambda: calls.append("synced"))
+
+    sync_all_platforms_during_live_window()
+
+    assert calls == []

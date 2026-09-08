@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -226,3 +227,39 @@ def sync_all_platforms() -> None:
         # Yahoo adapter is added by its own follow-on plan.
     finally:
         db.close()
+
+
+NFL_SEASON_MONTHS = {9, 10, 11, 12, 1, 2}  # regular season through the Super Bowl
+
+
+def _is_likely_live_window(now: datetime | None = None) -> bool:
+    """A coarse, best-effort approximation of "an NFL game is probably in
+    progress right now" -- hardcoded typical broadcast windows (Thursday
+    Night Football, the Sunday slate, Monday Night Football), not real
+    per-game kickoff times fetched from either platform. This misses flexed
+    Saturday games in December, mid-week schedule changes, and bye-week
+    nuances -- an accepted approximation, since a false positive only costs
+    one extra sync cycle and a false negative just falls back to the
+    existing 20-minute baseline rather than the faster live cadence."""
+    now = now or datetime.now(timezone.utc)
+    et = now.astimezone(ZoneInfo("America/New_York"))
+    if et.month not in NFL_SEASON_MONTHS:
+        return False
+    weekday, hour = et.weekday(), et.hour
+    if weekday == 3:  # Thursday
+        return 20 <= hour <= 23
+    if weekday == 6:  # Sunday
+        return 13 <= hour <= 23
+    if weekday == 0:  # Monday
+        return 20 <= hour <= 23
+    return False
+
+
+def sync_all_platforms_during_live_window() -> None:
+    """Registered as a second, frequent (60s) scheduler job alongside the
+    existing 20-minute sync_all_platforms job -- outside a likely-live
+    window this is a no-op, so it adds no load the rest of the time. The
+    20-minute job and the manual "Sync now" button are unaffected by this
+    and keep running unconditionally."""
+    if _is_likely_live_window():
+        sync_all_platforms()
