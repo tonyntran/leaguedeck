@@ -57,3 +57,21 @@ def test_sync_status_timestamp_is_utc_marked(client):
     # And it round-trips to roughly "one minute ago" in real UTC terms.
     age = datetime.now(timezone.utc) - parsed
     assert timedelta(seconds=30) < age < timedelta(minutes=3)
+
+
+def test_trigger_sync_requires_auth(client):
+    resp = client.post("/sync-status/run")
+    assert resp.status_code == 401
+
+
+def test_trigger_sync_calls_sync_all_platforms(client, monkeypatch):
+    client.post("/auth/login", json={"password": TEST_PASSWORD})
+
+    calls = []
+    monkeypatch.setattr("app.routers.leagues.sync_all_platforms", lambda: calls.append(1))
+
+    resp = client.post("/sync-status/run")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert calls == [1]

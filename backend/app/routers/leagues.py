@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.auth import require_auth
 from app.db import get_db
 from app.models import League, SyncLog, Team
+from app.sync import sync_all_platforms
 
 router = APIRouter(prefix="/leagues", tags=["leagues"], dependencies=[Depends(require_auth)])
 
@@ -75,3 +76,12 @@ def get_sync_status(db: Session = Depends(get_db)):
             }
         )
     return result
+
+
+@sync_status_router.post("/run")
+def trigger_sync():
+    """Runs synchronously, so it can take up to ~30s on a cold players cache
+    (see the sync-blocking-lifespan note in the design spec) — callers should
+    show a loading state while this is in flight."""
+    sync_all_platforms()
+    return {"ok": True}
