@@ -178,27 +178,6 @@ def _league_teams_response():
     )
 
 
-def _team_roster_response(team_name):
-    return _fantasy_content(
-        [
-            {"name": "unused"},
-        ]
-    ) | {
-        "fantasy_content": [
-            {
-                "team": [
-                    {"name": team_name},
-                    {
-                        "roster": {
-                            "0": {"players": {"count": 0}},
-                        }
-                    },
-                ]
-            }
-        ]
-    }
-
-
 def _roster_with_players(entries):
     return {
         "fantasy_content": [
@@ -336,6 +315,26 @@ def test_normalize_league_marks_bench_slot_as_not_starting(monkeypatch):
         ),
         f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.1/roster;week=3": _roster_with_players(
             [_player_entry("222", "Bench Guy", "WR", "SF", "BN")]
+        ),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.2/roster;week=3": _roster_with_players([]),
+    }
+    monkeypatch.setattr(httpx, "get", lambda url, headers=None, timeout=15.0: FakeResponse(responses[url]))
+
+    result = yahoo.normalize_league(league_id, "test-access-token", "MY-GUID")
+    my_team = next(t for t in result["teams"] if t["is_mine"])
+    assert my_team["roster_json"][0]["is_starter"] is False
+
+
+def test_normalize_league_marks_ir_slot_as_not_starting(monkeypatch):
+    league_id = "999"
+    responses = {
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/metadata": _league_metadata_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/teams": _league_teams_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/scoreboard": _scoreboard_response(
+            "3", "nfl.l.999.t.1", "0", "nfl.l.999.t.2", "0"
+        ),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.1/roster;week=3": _roster_with_players(
+            [_player_entry("333", "Injured Guy", "RB", "SF", "IR")]
         ),
         f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.2/roster;week=3": _roster_with_players([]),
     }

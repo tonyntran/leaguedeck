@@ -65,6 +65,22 @@ def _navigate(fantasy_content, *keys: str):
     return current
 
 
+def _find_collection(container, key: str):
+    """A repeated collection (players, matchups, teams) can sit directly as
+    a sibling key on its parent, or nested one level inside an indexed
+    wrapper alongside other scalar siblings (e.g. roster's coverage_type
+    appearing before players) -- try the direct read first, and only search
+    inside _unwrap_list(container) if that comes up empty."""
+    direct = _reformat(container).get(key)
+    if direct is not None:
+        return direct
+    for entry in _unwrap_list(container):
+        candidate = _reformat(entry).get(key)
+        if candidate is not None:
+            return candidate
+    return None
+
+
 def _basic_auth_header(client_id: str, client_secret: str) -> dict:
     token = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
@@ -183,26 +199,19 @@ def _get_league_teams(league_key: str, access_token: str) -> list[dict]:
     return teams
 
 
-def _get_team_roster(team_key: str, week: int, access_token: str) -> list[dict]:
+def _get_team_roster(team_key: str, week: int | None, access_token: str) -> list[dict]:
     data = _get(f"{YAHOO_FANTASY_BASE_URL}/team/{team_key}/roster;week={week}", access_token)
     team_data = _navigate(data.get("fantasy_content"), "team")
     roster_raw = _reformat(team_data).get("roster")
-    players_raw = None
-    for entry in _unwrap_list(roster_raw):
-        candidate = _reformat(entry).get("players")
-        if candidate is not None:
-            players_raw = candidate
-            break
+    players_raw = _find_collection(roster_raw, "players")
 
     roster_players = []
     for entry in _unwrap_list(players_raw):
         player_entries = _reformat(entry).get("player")
         flat = _reformat(player_entries)
-        name_field = flat.get("name") or {}
+        name_field = _reformat(flat.get("name")) or {}
         slot_entries = flat.get("selected_position")
-        slot = _reformat(_unwrap_list(slot_entries)[0] if _unwrap_list(slot_entries) else {}).get(
-            "position"
-        )
+        slot = _reformat(slot_entries).get("position")
         player_id = str(flat.get("player_id"))
         roster_players.append(
             {
@@ -218,26 +227,21 @@ def _get_team_roster(team_key: str, week: int, access_token: str) -> list[dict]:
     return roster_players
 
 
-def _get_scoreboard(league_key: str, access_token: str) -> tuple[int, list[dict]]:
+def _get_scoreboard(league_key: str, access_token: str) -> tuple[int | None, list[list[dict]]]:
     """Returns (week, matchups), where each matchup is
     [{"team_key", "points"}, {"team_key", "points"}]."""
     data = _get(f"{YAHOO_FANTASY_BASE_URL}/league/{league_key}/scoreboard", access_token)
     league_data = _navigate(data.get("fantasy_content"), "league")
     scoreboard_raw = _reformat(league_data).get("scoreboard")
-    matchups_raw = None
+    matchups_raw = _find_collection(scoreboard_raw, "matchups")
     week = None
-    for entry in _unwrap_list(scoreboard_raw):
-        candidate = _reformat(entry).get("matchups")
-        if candidate is not None:
-            matchups_raw = candidate
-            break
 
     matchups = []
     for m_entry in _unwrap_list(matchups_raw):
         matchup = _reformat(_reformat(m_entry).get("matchup"))
         if week is None and matchup.get("week") is not None:
             week = int(matchup["week"])
-        teams_raw = matchup.get("teams")
+        teams_raw = _find_collection(matchup, "teams")
         pair = []
         for t_entry in _unwrap_list(teams_raw):
             team_entries = _reformat(t_entry).get("team")
@@ -257,6 +261,28 @@ def normalize_league(league_id: str, access_token: str, my_guid: str) -> dict:
     metadata = _get_league_metadata(league_key, access_token)
     teams = _get_league_teams(league_key, access_token)
     week, matchups = _get_scoreboard(league_key, access_token)
+
+    if week is None:
+        current_week_raw = metadata.get("current_week")
+        if current_week_raw is not None:
+            try:
+                week = int(current_week_raw)
+            except (TypeError, ValueError):
+                pass
+
+    if week is None:
+        logger.warning(
+            "yahoo: could not determine current week for league %s -- possible "
+            "scoreboard schema drift",
+            league_id,
+        )
+    if teams and not matchups:
+        logger.warning(
+            "yahoo: resolved 0 matchups for %d teams in league %s -- possible "
+            "scoreboard schema drift",
+            len(teams),
+            league_id,
+        )
 
     points_by_team_key: dict[str, float] = {}
     opponent_by_team_key: dict[str, tuple[str | None, float | None]] = {}
