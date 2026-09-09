@@ -219,3 +219,30 @@ def test_yahoo_authorize_returns_400_on_failed_exchange(client, monkeypatch):
     assert resp.status_code == 400
     # The exchange failure reason must not leak the raw code or a token.
     assert "bad-code" not in resp.text
+
+
+def test_yahoo_authorize_returns_400_when_guid_missing(client, monkeypatch):
+    from app.routers import settings as settings_router
+
+    client.post("/auth/login", json={"password": TEST_PASSWORD})
+    client.put(
+        "/settings/yahoo",
+        json={"client_id": "my-client-id", "client_secret": "shh", "league_ids": []},
+    )
+
+    monkeypatch.setattr(
+        settings_router.yahoo,
+        "exchange_code_for_tokens",
+        lambda client_id, client_secret, code: {
+            "access_token": "at-1",
+            "refresh_token": "rt-1",
+            "expires_in": 3600,
+            "yahoo_guid": None,
+        },
+    )
+
+    resp = client.post("/settings/yahoo/authorize", json={"code": "the-code"})
+    assert resp.status_code == 400
+
+    data = client.get("/settings/yahoo").json()
+    assert data["authorized"] is False

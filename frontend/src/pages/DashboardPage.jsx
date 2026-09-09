@@ -213,7 +213,7 @@ export default function DashboardPage() {
                 : league.platform === 'espn' && league.platform_league_id && myTeam.platform_team_id
                   ? `https://fantasy.espn.com/football/team?leagueId=${league.platform_league_id}&teamId=${myTeam.platform_team_id}`
                   : league.platform === 'yahoo' && league.platform_league_id && myTeam.platform_team_id
-                    ? `https://football.fantasysports.yahoo.com/f1/${league.platform_league_id}/${myTeam.platform_team_id}`
+                    ? `https://football.fantasysports.yahoo.com/f1/${league.platform_league_id}/${myTeam.platform_team_id.split('.').pop()}`
                     : null
             const CardHeadTag = teamUrl ? 'a' : 'div'
 

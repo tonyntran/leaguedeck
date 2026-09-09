@@ -200,7 +200,12 @@ def _get_league_teams(league_key: str, access_token: str) -> list[dict]:
 
 
 def _get_team_roster(team_key: str, week: int | None, access_token: str) -> list[dict]:
-    data = _get(f"{YAHOO_FANTASY_BASE_URL}/team/{team_key}/roster;week={week}", access_token)
+    # When the current week couldn't be resolved (e.g. scoreboard schema
+    # drift), omit the ;week= segment entirely rather than sending a
+    # literal "week=None" that Yahoo would reject -- Yahoo defaults to the
+    # current week when the parameter is absent.
+    week_segment = f";week={week}" if week is not None else ""
+    data = _get(f"{YAHOO_FANTASY_BASE_URL}/team/{team_key}/roster{week_segment}", access_token)
     team_data = _navigate(data.get("fantasy_content"), "team")
     roster_raw = _reformat(team_data).get("roster")
     players_raw = _find_collection(roster_raw, "players")

@@ -165,10 +165,16 @@ def authorize_yahoo(payload: YahooAuthorizeCode, db: Session = Depends(get_db)):
         # client -- a generic message is enough to act on.
         raise HTTPException(status_code=400, detail="Could not verify that code with Yahoo")
 
+    # A response missing the guid would leave sync_yahoo's "is Yahoo
+    # configured" gate permanently unsatisfied -- silently, with no
+    # SyncLog row and no error -- while this endpoint still reported
+    # success. Treat it the same as a failed exchange.
+    if not tokens.get("yahoo_guid"):
+        raise HTTPException(status_code=400, detail="Could not verify that code with Yahoo")
+
     _set_secret(db, "yahoo_access_token", tokens["access_token"])
     _set_secret(db, "yahoo_refresh_token", tokens["refresh_token"])
-    if tokens.get("yahoo_guid"):
-        _set_setting(db, "yahoo_guid", tokens["yahoo_guid"])
+    _set_setting(db, "yahoo_guid", tokens["yahoo_guid"])
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
     _set_setting(db, "yahoo_token_expires_at", expires_at.isoformat())
     return {"ok": True}

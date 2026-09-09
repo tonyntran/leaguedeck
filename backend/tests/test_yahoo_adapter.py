@@ -253,6 +253,59 @@ def _scoreboard_response(week, team_key_a, points_a, team_key_b, points_b):
     }
 
 
+def _scoreboard_response_no_matchups():
+    """A scoreboard response with zero matchups -- e.g. before the season's
+    first matchups have been created, or under the same kind of schema
+    drift the Task 2 fix round's warning anticipates."""
+    return {
+        "fantasy_content": [
+            {
+                "league": [
+                    {"name": "unused"},
+                    {"scoreboard": {"0": {"matchups": {"count": 0}}}},
+                ]
+            }
+        ]
+    }
+
+
+def _league_metadata_response_no_current_week():
+    return _fantasy_content(
+        [
+            {"name": "Test League", "season": "2026"},
+        ]
+    )
+
+
+def test_normalize_league_degrades_gracefully_when_week_unresolvable(monkeypatch):
+    """When neither the scoreboard nor the league metadata yields a current
+    week, normalize_league must still return team/roster data instead of
+    raising -- and _get_team_roster must fetch the roster URL with no
+    ;week= segment (a literal ";week=None" would be rejected by Yahoo)."""
+    league_id = "999"
+    responses = {
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/metadata": _league_metadata_response_no_current_week(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/teams": _league_teams_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/scoreboard": _scoreboard_response_no_matchups(),
+        # Deliberately registered with no ";week=" suffix -- if
+        # _get_team_roster still builds ".../roster;week=None", the lookup
+        # below raises KeyError and fails the test.
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.1/roster": _roster_with_players(
+            [_player_entry("111", "Player One", "RB", "KC", "QB")]
+        ),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.2/roster": _roster_with_players([]),
+    }
+    monkeypatch.setattr(httpx, "get", lambda url, headers=None, timeout=15.0: FakeResponse(responses[url]))
+
+    result = yahoo.normalize_league(league_id, "test-access-token", "MY-GUID")
+
+    my_team = next(t for t in result["teams"] if t["is_mine"])
+    assert my_team["week"] is None
+    assert my_team["points_for"] == 0.0
+    assert my_team["opponent_name"] is None
+    assert my_team["roster_json"][0]["name"] == "Player One"
+
+
 def test_normalize_league_builds_teams_with_roster_and_score(monkeypatch):
     league_id = "999"
     my_guid = "MY-GUID"
