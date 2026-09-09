@@ -1,13 +1,14 @@
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
 from app.adapters import espn as espn_adapter
 from app.adapters import sleeper as sleeper_adapter
-from app.crypto import decrypt_value
+from app.adapters import yahoo as yahoo_adapter
+from app.crypto import decrypt_value, encrypt_value
 from app.db import get_sessionmaker
 from app.models import AppSetting, League, Secret, SyncLog, Team
 from app.schedule import is_likely_live_window
@@ -34,6 +35,25 @@ def _get_setting(db: Session, key: str) -> str | None:
 def _get_secret(db: Session, key: str) -> str | None:
     row = db.query(Secret).filter(Secret.key == key).first()
     return row.encrypted_value if row else None
+
+
+def _set_setting(db: Session, key: str, value: str) -> None:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if row is None:
+        db.add(AppSetting(key=key, value=value))
+    else:
+        row.value = value
+    db.commit()
+
+
+def _set_secret(db: Session, key: str, value: str) -> None:
+    row = db.query(Secret).filter(Secret.key == key).first()
+    encrypted = encrypt_value(value)
+    if row is None:
+        db.add(Secret(key=key, encrypted_value=encrypted))
+    else:
+        row.encrypted_value = encrypted
+    db.commit()
 
 
 def _parse_league_ids(raw: str) -> list[str]:
@@ -231,6 +251,128 @@ def sync_espn(db: Session) -> None:
             _safe_rollback(db)
 
 
+YAHOO_TOKEN_REFRESH_MARGIN_SECONDS = 5 * 60
+
+
+def _sync_one_yahoo_league(db: Session, league_id: str, access_token: str, my_guid: str) -> None:
+    """Refresh a single Yahoo league. Caller commits/rolls back so that one
+    league's failure cannot discard another league's work."""
+    normalized = yahoo_adapter.normalize_league(league_id, access_token, my_guid)
+
+    league = (
+        db.query(League)
+        .filter(League.platform == "yahoo", League.platform_league_id == league_id)
+        .first()
+    )
+    if league is None:
+        league = League(
+            platform="yahoo",
+            platform_league_id=league_id,
+            name=normalized["name"],
+            season=normalized["season"],
+        )
+        db.add(league)
+        db.flush()
+    else:
+        league.name = normalized["name"]
+        league.season = normalized["season"]
+        db.query(Team).filter(Team.league_id == league.id).delete()
+
+    for team_data in normalized["teams"]:
+        roster_players = team_data.pop("roster_json")
+        db.add(
+            Team(
+                league_id=league.id,
+                roster_json=json.dumps(roster_players),
+                **team_data,
+            )
+        )
+
+
+def sync_yahoo(db: Session) -> None:
+    """Yahoo setup is genuinely optional and requires a full OAuth handshake
+    beyond just saving credentials -- checks configuration (client
+    credentials AND a completed authorization) *before* creating any
+    SyncLog row, matching sync_sleeper/sync_espn's fix for the same
+    permanently-degraded-banner problem."""
+    client_id = _get_setting(db, "yahoo_client_id")
+    league_ids = _parse_league_ids(_get_setting(db, "yahoo_league_ids") or "")
+    client_secret_encrypted = _get_secret(db, "yahoo_client_secret")
+    access_token_encrypted = _get_secret(db, "yahoo_access_token")
+    refresh_token_encrypted = _get_secret(db, "yahoo_refresh_token")
+    my_guid = _get_setting(db, "yahoo_guid")
+    if not (
+        client_id
+        and league_ids
+        and client_secret_encrypted
+        and access_token_encrypted
+        and refresh_token_encrypted
+        and my_guid
+    ):
+        return
+
+    log = SyncLog(platform="yahoo", started_at=datetime.now(timezone.utc))
+    db.add(log)
+    db.commit()
+
+    try:
+        client_secret = decrypt_value(client_secret_encrypted)
+        access_token = decrypt_value(access_token_encrypted)
+
+        expires_at_raw = _get_setting(db, "yahoo_token_expires_at")
+        expires_at = (
+            datetime.fromisoformat(expires_at_raw) if expires_at_raw else datetime.now(timezone.utc)
+        )
+        expiring_soon = (expires_at - datetime.now(timezone.utc)).total_seconds() < (
+            YAHOO_TOKEN_REFRESH_MARGIN_SECONDS
+        )
+
+        if expiring_soon:
+            try:
+                refresh_token = decrypt_value(refresh_token_encrypted)
+                tokens = yahoo_adapter.refresh_access_token(client_id, client_secret, refresh_token)
+            except Exception as exc:
+                # No amount of retrying fixes an invalid refresh token --
+                # this is an expected once-a-season event (Yahoo refresh
+                # tokens expire after months of off-season inactivity), not
+                # an alarming failure.
+                log.success = False
+                log.error = f"Yahoo authorization expired -- reconnect in Settings ({exc})"
+                log.finished_at = datetime.now(timezone.utc)
+                db.commit()
+                return
+
+            access_token = tokens["access_token"]
+            _set_secret(db, "yahoo_access_token", access_token)
+            _set_secret(db, "yahoo_refresh_token", tokens["refresh_token"])
+            new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
+            _set_setting(db, "yahoo_token_expires_at", new_expires_at.isoformat())
+
+        errors: list[str] = []
+        for league_id in league_ids:
+            try:
+                _sync_one_yahoo_league(db, league_id, access_token, my_guid)
+                db.commit()
+            except Exception as exc:
+                _safe_rollback(db)
+                logger.exception("yahoo sync: league %s failed", league_id)
+                errors.append(f"league {league_id}: {exc}")
+
+        log.success = not errors
+        log.error = "; ".join(errors) if errors else None
+    except Exception as exc:  # sync must never crash the scheduler
+        _safe_rollback(db)
+        log.success = False
+        log.error = str(exc)
+    finally:
+        try:
+            log.finished_at = datetime.now(timezone.utc)
+            db.commit()
+        except Exception:
+            logger.exception("yahoo sync: failed to record SyncLog completion")
+            _safe_rollback(db)
+
+
 def sync_all_platforms() -> None:
     if not _sync_lock.acquire(blocking=False):
         logger.info("sync_all_platforms: a sync is already in progress, skipping this trigger")
@@ -240,7 +382,7 @@ def sync_all_platforms() -> None:
         try:
             sync_sleeper(db)
             sync_espn(db)
-            # Yahoo adapter is added by its own follow-on plan.
+            sync_yahoo(db)
         finally:
             db.close()
     finally:

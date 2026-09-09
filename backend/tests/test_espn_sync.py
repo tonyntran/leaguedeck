@@ -148,10 +148,11 @@ def test_sync_all_platforms_calls_espn_alongside_sleeper(monkeypatch):
     calls = []
     monkeypatch.setattr("app.sync.sync_sleeper", lambda db: calls.append("sleeper"))
     monkeypatch.setattr("app.sync.sync_espn", lambda db: calls.append("espn"))
+    monkeypatch.setattr("app.sync.sync_yahoo", lambda db: calls.append("yahoo"))
 
     sync_all_platforms()
 
-    assert calls == ["sleeper", "espn"]
+    assert calls == ["sleeper", "espn", "yahoo"]
 
 
 def test_current_espn_season_falls_back_before_march():

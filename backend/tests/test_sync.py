@@ -265,8 +265,9 @@ def test_sync_all_platforms_runs_when_lock_is_free(monkeypatch):
     calls = []
     monkeypatch.setattr(sync_module, "sync_sleeper", lambda db: calls.append("sleeper"))
     monkeypatch.setattr(sync_module, "sync_espn", lambda db: calls.append("espn"))
+    monkeypatch.setattr(sync_module, "sync_yahoo", lambda db: calls.append("yahoo"))
 
     sync_module.sync_all_platforms()
 
-    assert calls == ["sleeper", "espn"]
+    assert calls == ["sleeper", "espn", "yahoo"]
     assert not sync_module._sync_lock.locked()  # released after a normal run
