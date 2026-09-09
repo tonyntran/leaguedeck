@@ -127,3 +127,171 @@ def refresh_access_token(client_id: str, client_secret: str, refresh_token: str)
         timeout=10.0,
     )
     return _parse_token_response(resp)
+
+
+BENCH_SLOT = "BN"
+IR_SLOTS = ("IR", "IR+", "IR-R")
+
+
+def _get(url: str, access_token: str) -> dict:
+    resp = httpx.get(
+        url,
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15.0,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _league_key(league_id: str) -> str:
+    return f"nfl.l.{league_id}"
+
+
+def _get_league_metadata(league_key: str, access_token: str) -> dict:
+    data = _get(f"{YAHOO_FANTASY_BASE_URL}/league/{league_key}/metadata", access_token)
+    league_data = _navigate(data.get("fantasy_content"), "league")
+    return _reformat(league_data)
+
+
+def _manager_guids(team_entries: list) -> list[str]:
+    managers_raw = _reformat(team_entries).get("managers")
+    guids = []
+    for entry in _unwrap_list(managers_raw):
+        manager = _reformat(entry).get("manager") or {}
+        guid = manager.get("guid")
+        if guid:
+            guids.append(guid)
+    return guids
+
+
+def _get_league_teams(league_key: str, access_token: str) -> list[dict]:
+    """Returns one dict per team: {"team_key", "name", "manager_guids"}."""
+    data = _get(f"{YAHOO_FANTASY_BASE_URL}/league/{league_key}/teams", access_token)
+    league_data = _navigate(data.get("fantasy_content"), "league")
+    teams_raw = _reformat(league_data).get("teams")
+    teams = []
+    for entry in _unwrap_list(teams_raw):
+        team_entries = _reformat(entry).get("team")
+        flat = _reformat(team_entries)
+        teams.append(
+            {
+                "team_key": flat.get("team_key"),
+                "name": flat.get("name"),
+                "manager_guids": _manager_guids(team_entries),
+            }
+        )
+    return teams
+
+
+def _get_team_roster(team_key: str, week: int, access_token: str) -> list[dict]:
+    data = _get(f"{YAHOO_FANTASY_BASE_URL}/team/{team_key}/roster;week={week}", access_token)
+    team_data = _navigate(data.get("fantasy_content"), "team")
+    roster_raw = _reformat(team_data).get("roster")
+    players_raw = None
+    for entry in _unwrap_list(roster_raw):
+        candidate = _reformat(entry).get("players")
+        if candidate is not None:
+            players_raw = candidate
+            break
+
+    roster_players = []
+    for entry in _unwrap_list(players_raw):
+        player_entries = _reformat(entry).get("player")
+        flat = _reformat(player_entries)
+        name_field = flat.get("name") or {}
+        slot_entries = flat.get("selected_position")
+        slot = _reformat(_unwrap_list(slot_entries)[0] if _unwrap_list(slot_entries) else {}).get(
+            "position"
+        )
+        player_id = str(flat.get("player_id"))
+        roster_players.append(
+            {
+                "player_id": player_id,
+                "name": name_field.get("full") or player_id,
+                "position": flat.get("display_position"),
+                "team": flat.get("editorial_team_abbr"),
+                "is_starter": slot != BENCH_SLOT and slot not in IR_SLOTS,
+                "actual_points": None,
+                "projected_points": None,
+            }
+        )
+    return roster_players
+
+
+def _get_scoreboard(league_key: str, access_token: str) -> tuple[int, list[dict]]:
+    """Returns (week, matchups), where each matchup is
+    [{"team_key", "points"}, {"team_key", "points"}]."""
+    data = _get(f"{YAHOO_FANTASY_BASE_URL}/league/{league_key}/scoreboard", access_token)
+    league_data = _navigate(data.get("fantasy_content"), "league")
+    scoreboard_raw = _reformat(league_data).get("scoreboard")
+    matchups_raw = None
+    week = None
+    for entry in _unwrap_list(scoreboard_raw):
+        candidate = _reformat(entry).get("matchups")
+        if candidate is not None:
+            matchups_raw = candidate
+            break
+
+    matchups = []
+    for m_entry in _unwrap_list(matchups_raw):
+        matchup = _reformat(_reformat(m_entry).get("matchup"))
+        if week is None and matchup.get("week") is not None:
+            week = int(matchup["week"])
+        teams_raw = matchup.get("teams")
+        pair = []
+        for t_entry in _unwrap_list(teams_raw):
+            team_entries = _reformat(t_entry).get("team")
+            flat = _reformat(team_entries)
+            points = _reformat(flat.get("team_points")).get("total")
+            pair.append({"team_key": flat.get("team_key"), "points": float(points or 0.0)})
+        if len(pair) == 2:
+            matchups.append(pair)
+    return week, matchups
+
+
+def normalize_league(league_id: str, access_token: str, my_guid: str) -> dict:
+    """Fetch everything for one Yahoo league and normalize into
+    LeagueDeck's shared League/Team shape (the same shape sleeper.
+    normalize_league/espn.normalize_league produce)."""
+    league_key = _league_key(league_id)
+    metadata = _get_league_metadata(league_key, access_token)
+    teams = _get_league_teams(league_key, access_token)
+    week, matchups = _get_scoreboard(league_key, access_token)
+
+    points_by_team_key: dict[str, float] = {}
+    opponent_by_team_key: dict[str, tuple[str | None, float | None]] = {}
+    for pair in matchups:
+        (a, b) = pair
+        points_by_team_key[a["team_key"]] = a["points"]
+        points_by_team_key[b["team_key"]] = b["points"]
+        opponent_by_team_key[a["team_key"]] = (b["team_key"], b["points"])
+        opponent_by_team_key[b["team_key"]] = (a["team_key"], a["points"])
+
+    teams_by_key = {t["team_key"]: t for t in teams}
+
+    result_teams = []
+    for team in teams:
+        team_key = team["team_key"]
+        opponent_key, opponent_points = opponent_by_team_key.get(team_key, (None, None))
+        opponent_team = teams_by_key.get(opponent_key)
+        roster_players = _get_team_roster(team_key, week, access_token)
+        result_teams.append(
+            {
+                "platform_team_id": team_key,
+                "name": team["name"],
+                "is_mine": my_guid in team["manager_guids"],
+                "roster_json": roster_players,
+                "points_for": points_by_team_key.get(team_key, 0.0),
+                "opponent_name": opponent_team["name"] if opponent_team else None,
+                "opponent_points": opponent_points,
+                "week": week,
+            }
+        )
+
+    return {
+        "platform": "yahoo",
+        "platform_league_id": league_id,
+        "name": metadata.get("name") or f"Yahoo League {league_id}",
+        "season": metadata.get("season") or "",
+        "teams": result_teams,
+    }

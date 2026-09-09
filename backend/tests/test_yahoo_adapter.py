@@ -136,3 +136,254 @@ def test_exchange_code_for_tokens_raises_on_http_error(monkeypatch):
     except httpx.HTTPStatusError:
         raised = True
     assert raised
+
+
+def _fantasy_content(league_body):
+    """Wraps a league response body the way Yahoo's top-level envelope
+    does: fantasy_content as a list of single-key dicts (mixed sibling
+    elements), one of which is "league"."""
+    return {"fantasy_content": [{"league": league_body}]}
+
+
+def _league_metadata_response():
+    return _fantasy_content(
+        [
+            {"name": "Test League", "season": "2026", "current_week": "3"},
+        ]
+    )
+
+
+def _league_teams_response():
+    return _fantasy_content(
+        [
+            {"name": "Test League"},
+            {
+                "teams": {
+                    "0": {
+                        "team": [
+                            {"team_key": "nfl.l.999.t.1", "name": "Team One"},
+                            {"managers": {"0": {"manager": {"guid": "MY-GUID"}}}},
+                        ]
+                    },
+                    "1": {
+                        "team": [
+                            {"team_key": "nfl.l.999.t.2", "name": "Team Two"},
+                            {"managers": {"0": {"manager": {"guid": "OTHER-GUID"}}}},
+                        ]
+                    },
+                    "count": 2,
+                }
+            },
+        ]
+    )
+
+
+def _team_roster_response(team_name):
+    return _fantasy_content(
+        [
+            {"name": "unused"},
+        ]
+    ) | {
+        "fantasy_content": [
+            {
+                "team": [
+                    {"name": team_name},
+                    {
+                        "roster": {
+                            "0": {"players": {"count": 0}},
+                        }
+                    },
+                ]
+            }
+        ]
+    }
+
+
+def _roster_with_players(entries):
+    return {
+        "fantasy_content": [
+            {
+                "team": [
+                    {"name": "Team One"},
+                    {
+                        "roster": {
+                            "0": {
+                                "players": {
+                                    **{str(i): {"player": e} for i, e in enumerate(entries)},
+                                    "count": len(entries),
+                                }
+                            }
+                        }
+                    },
+                ]
+            }
+        ]
+    }
+
+
+def _player_entry(player_id, name, position, pro_team, slot):
+    return [
+        {
+            "player_id": player_id,
+            "name": {"full": name},
+            "display_position": position,
+            "editorial_team_abbr": pro_team,
+        },
+        {"selected_position": [{"position": slot}]},
+    ]
+
+
+def _scoreboard_response(week, team_key_a, points_a, team_key_b, points_b):
+    return {
+        "fantasy_content": [
+            {
+                "league": [
+                    {"name": "unused"},
+                    {
+                        "scoreboard": {
+                            "0": {
+                                "matchups": {
+                                    "0": {
+                                        "matchup": {
+                                            "week": week,
+                                            "teams": {
+                                                "0": {
+                                                    "team": [
+                                                        {"team_key": team_key_a},
+                                                        {"team_points": {"total": points_a}},
+                                                    ]
+                                                },
+                                                "1": {
+                                                    "team": [
+                                                        {"team_key": team_key_b},
+                                                        {"team_points": {"total": points_b}},
+                                                    ]
+                                                },
+                                                "count": 2,
+                                            },
+                                        }
+                                    },
+                                    "count": 1,
+                                }
+                            }
+                        }
+                    },
+                ]
+            }
+        ]
+    }
+
+
+def test_normalize_league_builds_teams_with_roster_and_score(monkeypatch):
+    league_id = "999"
+    my_guid = "MY-GUID"
+
+    responses = {
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/metadata": _league_metadata_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/teams": _league_teams_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/scoreboard": _scoreboard_response(
+            "3", "nfl.l.999.t.1", "100.5", "nfl.l.999.t.2", "90.2"
+        ),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.1/roster;week=3": _roster_with_players(
+            [_player_entry("111", "Player One", "RB", "KC", "QB")]
+        ),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.2/roster;week=3": _roster_with_players([]),
+    }
+
+    def fake_get(url, headers=None, timeout=15.0):
+        assert headers == {"Authorization": "Bearer test-access-token"}
+        return FakeResponse(responses[url])
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = yahoo.normalize_league(league_id, "test-access-token", my_guid)
+
+    assert result["platform"] == "yahoo"
+    assert result["platform_league_id"] == "999"
+    assert result["name"] == "Test League"
+    assert result["season"] == "2026"
+
+    my_team = next(t for t in result["teams"] if t["is_mine"])
+    assert my_team["platform_team_id"] == "nfl.l.999.t.1"
+    assert my_team["name"] == "Team One"
+    assert my_team["points_for"] == 100.5
+    assert my_team["opponent_name"] == "Team Two"
+    assert my_team["opponent_points"] == 90.2
+    assert my_team["week"] == 3
+
+    player = my_team["roster_json"][0]
+    assert player == {
+        "player_id": "111",
+        "name": "Player One",
+        "position": "RB",
+        "team": "KC",
+        "is_starter": True,
+        "actual_points": None,
+        "projected_points": None,
+    }
+
+    other_team = next(t for t in result["teams"] if not t["is_mine"])
+    assert other_team["name"] == "Team Two"
+
+
+def test_normalize_league_marks_bench_slot_as_not_starting(monkeypatch):
+    league_id = "999"
+    responses = {
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/metadata": _league_metadata_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/teams": _league_teams_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/scoreboard": _scoreboard_response(
+            "3", "nfl.l.999.t.1", "0", "nfl.l.999.t.2", "0"
+        ),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.1/roster;week=3": _roster_with_players(
+            [_player_entry("222", "Bench Guy", "WR", "SF", "BN")]
+        ),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.2/roster;week=3": _roster_with_players([]),
+    }
+    monkeypatch.setattr(httpx, "get", lambda url, headers=None, timeout=15.0: FakeResponse(responses[url]))
+
+    result = yahoo.normalize_league(league_id, "test-access-token", "MY-GUID")
+    my_team = next(t for t in result["teams"] if t["is_mine"])
+    assert my_team["roster_json"][0]["is_starter"] is False
+
+
+def test_normalize_league_casts_string_points_and_week_to_correct_types(monkeypatch):
+    """Every value in Yahoo's JSON arrives as a string -- this must not
+    leak a str into Team.points_for (Float) or Team.week (Integer)."""
+    league_id = "999"
+    responses = {
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/metadata": _league_metadata_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/teams": _league_teams_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/scoreboard": _scoreboard_response(
+            "3", "nfl.l.999.t.1", "123.45", "nfl.l.999.t.2", "67.89"
+        ),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.1/roster;week=3": _roster_with_players([]),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.2/roster;week=3": _roster_with_players([]),
+    }
+    monkeypatch.setattr(httpx, "get", lambda url, headers=None, timeout=15.0: FakeResponse(responses[url]))
+
+    result = yahoo.normalize_league(league_id, "test-access-token", "MY-GUID")
+    my_team = next(t for t in result["teams"] if t["is_mine"])
+    assert my_team["points_for"] == 123.45
+    assert isinstance(my_team["points_for"], float)
+    assert my_team["week"] == 3
+    assert isinstance(my_team["week"], int)
+
+
+def test_normalize_league_matches_guid_for_is_mine_not_a_team_flag(monkeypatch):
+    """is_mine must come from comparing the authenticated user's own GUID
+    against each team's manager GUIDs -- never a team-level flag."""
+    league_id = "999"
+    responses = {
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/metadata": _league_metadata_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/teams": _league_teams_response(),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/league/nfl.l.{league_id}/scoreboard": _scoreboard_response(
+            "3", "nfl.l.999.t.1", "0", "nfl.l.999.t.2", "0"
+        ),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.1/roster;week=3": _roster_with_players([]),
+        f"{yahoo.YAHOO_FANTASY_BASE_URL}/team/nfl.l.999.t.2/roster;week=3": _roster_with_players([]),
+    }
+    monkeypatch.setattr(httpx, "get", lambda url, headers=None, timeout=15.0: FakeResponse(responses[url]))
+
+    # Authenticate as the SECOND team's manager this time.
+    result = yahoo.normalize_league(league_id, "test-access-token", "OTHER-GUID")
+    assert [t["platform_team_id"] for t in result["teams"] if t["is_mine"]] == ["nfl.l.999.t.2"]
