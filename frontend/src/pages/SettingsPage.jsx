@@ -273,32 +273,32 @@ export default function SettingsPage() {
           Save
         </button>
         {yahooSaved && <p className="ld-saved">Saved.</p>}
-
-        {yahooClientSecretConfigured && (
-          <>
-            <p className="ld-saved">{yahooAuthorized ? 'Connected ✓' : 'Not yet connected.'}</p>
-            <button type="button" className="ld-button" onClick={handleYahooAuthorizeClick}>
-              Authorize with Yahoo
-            </button>
-            <label htmlFor="yahooCode">Verification code from Yahoo</label>
-            <input
-              id="yahooCode"
-              className="ld-input"
-              value={yahooCode}
-              onChange={(e) => setYahooCode(e.target.value)}
-            />
-            <button type="button" className="ld-button" onClick={handleYahooCodeSubmit}>
-              Submit code
-            </button>
-          </>
-        )}
-
-        {yahooError && (
-          <p role="alert" className="ld-error">
-            {yahooError}
-          </p>
-        )}
       </form>
+
+      {yahooClientSecretConfigured && (
+        <form className="ld-settings-form" onSubmit={handleYahooCodeSubmit}>
+          <p className="ld-saved">{yahooAuthorized ? 'Connected ✓' : 'Not yet connected.'}</p>
+          <button type="button" className="ld-button" onClick={handleYahooAuthorizeClick}>
+            Authorize with Yahoo
+          </button>
+          <label htmlFor="yahooCode">Verification code from Yahoo</label>
+          <input
+            id="yahooCode"
+            className="ld-input"
+            value={yahooCode}
+            onChange={(e) => setYahooCode(e.target.value)}
+          />
+          <button type="submit" className="ld-button">
+            Submit code
+          </button>
+        </form>
+      )}
+
+      {yahooError && (
+        <p role="alert" className="ld-error">
+          {yahooError}
+        </p>
+      )}
     </div>
   )
 }
