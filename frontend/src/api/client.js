@@ -54,6 +54,32 @@ export function putEspnSettings(leagueIds, espnS2, swid) {
   })
 }
 
+export function getYahooSettings() {
+  return request('/settings/yahoo')
+}
+
+export function putYahooSettings(leagueIds, clientId, clientSecret) {
+  const body = { client_id: clientId, league_ids: leagueIds }
+  // Same optional-secret contract as ESPN: only send client_secret if the
+  // user actually typed something this time.
+  if (clientSecret) body.client_secret = clientSecret
+  return request('/settings/yahoo', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export function getYahooAuthorizeUrl() {
+  return request('/settings/yahoo/authorize-url')
+}
+
+export function submitYahooAuthorizeCode(code) {
+  return request('/settings/yahoo/authorize', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+}
+
 export function getLeagues() {
   return request('/leagues')
 }

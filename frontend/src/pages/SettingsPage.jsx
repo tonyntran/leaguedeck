@@ -2,8 +2,12 @@ import { useEffect, useState } from 'react'
 import {
   getEspnSettings,
   getSleeperSettings,
+  getYahooAuthorizeUrl,
+  getYahooSettings,
   putEspnSettings,
   putSleeperSettings,
+  putYahooSettings,
+  submitYahooAuthorizeCode,
 } from '../api/client'
 
 export default function SettingsPage() {
@@ -19,6 +23,32 @@ export default function SettingsPage() {
   const [swidConfigured, setSwidConfigured] = useState(false)
   const [espnSaved, setEspnSaved] = useState(false)
   const [espnError, setEspnError] = useState(null)
+
+  const [yahooClientId, setYahooClientId] = useState('')
+  const [yahooClientSecret, setYahooClientSecret] = useState('')
+  const [yahooLeagueIdsText, setYahooLeagueIdsText] = useState('')
+  const [yahooClientSecretConfigured, setYahooClientSecretConfigured] = useState(false)
+  const [yahooAuthorized, setYahooAuthorized] = useState(false)
+  const [yahooCode, setYahooCode] = useState('')
+  const [yahooSaved, setYahooSaved] = useState(false)
+  const [yahooError, setYahooError] = useState(null)
+
+  function loadYahooSettings() {
+    return getYahooSettings()
+      .then((data) => {
+        setYahooClientId(data.client_id)
+        setYahooLeagueIdsText(data.league_ids.join(', '))
+        setYahooClientSecretConfigured(data.client_secret_configured)
+        setYahooAuthorized(data.authorized)
+      })
+      .catch((err) => {
+        setYahooError(
+          err.status === 401
+            ? 'Your session expired. Log in again to load settings.'
+            : 'Could not load settings.',
+        )
+      })
+  }
 
   useEffect(() => {
     getSleeperSettings()
@@ -47,6 +77,8 @@ export default function SettingsPage() {
             : 'Could not load settings.',
         )
       })
+
+    loadYahooSettings()
   }, [])
 
   async function handleSubmit(e) {
@@ -93,6 +125,50 @@ export default function SettingsPage() {
           ? 'Your session expired. Log in again to save settings.'
           : 'Could not save settings.',
       )
+    }
+  }
+
+  async function handleYahooSubmit(e) {
+    e.preventDefault()
+    const leagueIds = yahooLeagueIdsText
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    setYahooError(null)
+    setYahooSaved(false)
+    try {
+      await putYahooSettings(leagueIds, yahooClientId, yahooClientSecret)
+      setYahooSaved(true)
+      setYahooClientSecret('')
+      await loadYahooSettings()
+    } catch (err) {
+      setYahooError(
+        err.status === 401
+          ? 'Your session expired. Log in again to save settings.'
+          : 'Could not save settings.',
+      )
+    }
+  }
+
+  async function handleYahooAuthorizeClick() {
+    setYahooError(null)
+    try {
+      const { url } = await getYahooAuthorizeUrl()
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      setYahooError('Could not start Yahoo authorization. Save your Yahoo credentials first.')
+    }
+  }
+
+  async function handleYahooCodeSubmit(e) {
+    e.preventDefault()
+    setYahooError(null)
+    try {
+      await submitYahooAuthorizeCode(yahooCode)
+      setYahooCode('')
+      await loadYahooSettings()
+    } catch (err) {
+      setYahooError('Could not verify that code with Yahoo. Try authorizing again.')
     }
   }
 
@@ -163,6 +239,63 @@ export default function SettingsPage() {
         {espnError && (
           <p role="alert" className="ld-error">
             {espnError}
+          </p>
+        )}
+      </form>
+
+      <form className="ld-settings-form" onSubmit={handleYahooSubmit}>
+        <label htmlFor="yahooClientId">Yahoo Client ID</label>
+        <input
+          id="yahooClientId"
+          className="ld-input"
+          value={yahooClientId}
+          onChange={(e) => setYahooClientId(e.target.value)}
+        />
+        <label htmlFor="yahooClientSecret">
+          Yahoo Client Secret{' '}
+          {yahooClientSecretConfigured && '(already saved — leave blank to keep it)'}
+        </label>
+        <input
+          id="yahooClientSecret"
+          type="password"
+          className="ld-input"
+          value={yahooClientSecret}
+          onChange={(e) => setYahooClientSecret(e.target.value)}
+        />
+        <label htmlFor="yahooLeagueIds">Yahoo league IDs (comma-separated)</label>
+        <input
+          id="yahooLeagueIds"
+          className="ld-input"
+          value={yahooLeagueIdsText}
+          onChange={(e) => setYahooLeagueIdsText(e.target.value)}
+        />
+        <button type="submit" className="ld-button">
+          Save
+        </button>
+        {yahooSaved && <p className="ld-saved">Saved.</p>}
+
+        {yahooClientSecretConfigured && (
+          <>
+            <p className="ld-saved">{yahooAuthorized ? 'Connected ✓' : 'Not yet connected.'}</p>
+            <button type="button" className="ld-button" onClick={handleYahooAuthorizeClick}>
+              Authorize with Yahoo
+            </button>
+            <label htmlFor="yahooCode">Verification code from Yahoo</label>
+            <input
+              id="yahooCode"
+              className="ld-input"
+              value={yahooCode}
+              onChange={(e) => setYahooCode(e.target.value)}
+            />
+            <button type="button" className="ld-button" onClick={handleYahooCodeSubmit}>
+              Submit code
+            </button>
+          </>
+        )}
+
+        {yahooError && (
+          <p role="alert" className="ld-error">
+            {yahooError}
           </p>
         )}
       </form>
