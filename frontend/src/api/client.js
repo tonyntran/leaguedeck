@@ -95,3 +95,7 @@ export function triggerSync() {
 export function getWaiverWire(leagueId) {
   return request(`/leagues/${leagueId}/waiver-wire`)
 }
+
+export function getNflScores() {
+  return request('/nfl-scores')
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getLeagues, getSyncStatus, getWaiverWire, triggerSync } from '../api/client'
+import { getLeagues, getNflScores, getSyncStatus, getWaiverWire, triggerSync } from '../api/client'
 
 const STALE_THRESHOLD_MINUTES = 60
 
@@ -56,8 +56,10 @@ function RosterList({ players }) {
     <div>
       {players.map((player) => {
         const pts = formatPoints(player.actual_points, player.projected_points)
+        const isLive = player.actual_points != null
         return (
-          <div className="ld-roster-row" key={player.player_id}>
+          <div className={`ld-roster-row${isLive ? ' ld-live' : ''}`} key={player.player_id}>
+            <span className="ld-dot" />
             <span className="ld-pos">{player.position}</span>
             <span className="ld-nm">{player.name}</span>
             <span className="ld-tm">{player.team}</span>
@@ -73,6 +75,93 @@ function RosterList({ players }) {
   )
 }
 
+// Starting lineup is always open; Bench and Waiver wire default collapsed
+// so a card opens on what actually matters on gameday. Each section keeps
+// its own open/closed state, independent of every other section and card.
+function LineupSection({ title, defaultOpen, collapsible, children }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="ld-lineup-section">
+      <h3
+        className={`ld-lineup-label${collapsible ? ` ld-collapsible${open ? '' : ' ld-closed'}` : ''}`}
+        onClick={collapsible ? () => setOpen((o) => !o) : undefined}
+      >
+        {collapsible && <span className="ld-chevron">▾</span>}
+        {title}
+      </h3>
+      {open && children}
+    </div>
+  )
+}
+
+// A quick score check across every league without scrolling through full
+// cards below -- jumps to the matching card by id.
+function ScoreStrip({ leagues }) {
+  const rows = leagues
+    .map((league) => ({ league, myTeam: league.teams.find((t) => t.is_mine) }))
+    .filter(({ myTeam }) => myTeam)
+  if (rows.length === 0) return null
+  return (
+    <div className="ld-scorestrip">
+      {rows.map(({ league, myTeam }) => (
+        <a className="ld-score-chip" key={league.id} href={`#league-card-${league.id}`}>
+          <span className="ld-chip-name">
+            {myTeam.name}
+            <span className="ld-chip-league">
+              {league.name}
+              {myTeam.week != null ? ` · week ${myTeam.week}` : ''}
+            </span>
+          </span>
+          <span className="ld-chip-score">
+            {myTeam.points_for}
+            <span className="ld-chip-vs">
+              {myTeam.opponent_name ? `vs ${myTeam.opponent_name}` : 'no opponent'}
+            </span>
+          </span>
+        </a>
+      ))}
+    </div>
+  )
+}
+
+// A short list of only the games that actually involve one of your rostered
+// players, so it stays scannable instead of turning into a full NFL
+// scoreboard. Games that haven't kicked off or have already finished are
+// filtered out server-side -- this rail only ever shows what's live now.
+function LiveGamesRail({ games }) {
+  return (
+    <aside className="ld-live-rail">
+      <h2 className="ld-live-rail-title">Live games</h2>
+      {games.length === 0 ? (
+        <p className="ld-status ld-live-empty">No games with your players are live right now.</p>
+      ) : (
+        games.map((game) => (
+          <div className="ld-live-game" key={`${game.away_team}-${game.home_team}`}>
+            <div className="ld-live-score">
+              <span>
+                {game.away_team} {game.away_score}
+              </span>
+              <span className="ld-live-at">at</span>
+              <span>
+                {game.home_team} {game.home_score}
+              </span>
+            </div>
+            {game.detail && <p className="ld-live-detail">{game.detail}</p>}
+            {[...game.away_players, ...game.home_players].map((player) => (
+              <p className="ld-live-player" key={`${player.league_name}-${player.name}`}>
+                {player.name}{' '}
+                <span className="ld-live-player-meta">
+                  {player.position} · {player.league_name}
+                </span>
+              </p>
+            ))}
+          </div>
+        ))
+      )}
+    </aside>
+  )
+}
+
 export default function DashboardPage() {
   const [leagues, setLeagues] = useState(null)
   const [syncStatus, setSyncStatus] = useState([])
@@ -80,6 +169,7 @@ export default function DashboardPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncError, setSyncError] = useState(null)
   const [waiverWire, setWaiverWire] = useState({})
+  const [liveGames, setLiveGames] = useState([])
   const [refreshFailureCount, setRefreshFailureCount] = useState(0)
 
   function loadData() {
@@ -97,6 +187,9 @@ export default function DashboardPage() {
     getSyncStatus()
       .then(setSyncStatus)
       .catch(() => {})
+    getNflScores()
+      .then(setLiveGames)
+      .catch(() => setLiveGames([]))
   }
 
   useEffect(loadData, [])
@@ -105,15 +198,16 @@ export default function DashboardPage() {
   // to have" list that doesn't move that fast, and re-fetching it this
   // often would poll Sleeper's live trending/players endpoints regardless
   // of whether a game is actually live, undermining the point of gating
-  // the backend's own fast sync to likely-live windows. Scores and sync
-  // status are both cheap local reads, so they're the only things this
-  // timer refreshes.
+  // the backend's own fast sync to likely-live windows. Scores, sync
+  // status, and live NFL games are all cheap local/cached reads, so
+  // they're the only things this timer refreshes.
   useEffect(() => {
     function refreshScores() {
-      Promise.all([getLeagues(), getSyncStatus()])
-        .then(([leaguesData, statusData]) => {
+      Promise.all([getLeagues(), getSyncStatus(), getNflScores()])
+        .then(([leaguesData, statusData, gamesData]) => {
           setLeagues(leaguesData)
           setSyncStatus(statusData)
+          setLiveGames(gamesData)
           setRefreshFailureCount(0)
         })
         // A silently-stalled timer (session expired, network down) would
@@ -184,93 +278,100 @@ export default function DashboardPage() {
           Live updates paused — check your connection, or log in again if your session expired.
         </p>
       )}
-      <div className="ld-leagues">
-        <div className="ld-team-grid">
-          {leagues.map((league) => {
-            const myTeam = league.teams.find((t) => t.is_mine)
-            if (!myTeam) {
+      <ScoreStrip leagues={leagues} />
+      <div className="ld-dash-layout">
+        <div className="ld-leagues">
+          <div className="ld-team-grid">
+            {leagues.map((league) => {
+              const myTeam = league.teams.find((t) => t.is_mine)
+              if (!myTeam) {
+                return (
+                  <article className="ld-team-card" key={league.id}>
+                    <div className="ld-card-head">
+                      <span className="ld-card-name">{league.name}</span>
+                    </div>
+                    <p className="ld-status">Could not find your team in this league.</p>
+                  </article>
+                )
+              }
+
+              const starters = byPositionOrder(myTeam.roster.filter((p) => p.is_starter))
+              const bench = byPositionOrder(myTeam.roster.filter((p) => !p.is_starter))
+
+              // Sleeper's web app resolves "/team" to the logged-in user's own
+              // team within that league — no roster_id needed. ESPN has no such
+              // shorthand: its team page URL requires the numeric team ID
+              // alongside the league ID, which is exactly what platform_team_id
+              // already stores for ESPN leagues.
+              const teamUrl =
+                league.platform === 'sleeper' && league.platform_league_id
+                  ? `https://sleeper.com/leagues/${league.platform_league_id}/team`
+                  : league.platform === 'espn' && league.platform_league_id && myTeam.platform_team_id
+                    ? `https://fantasy.espn.com/football/team?leagueId=${league.platform_league_id}&teamId=${myTeam.platform_team_id}`
+                    : league.platform === 'yahoo' && league.platform_league_id && myTeam.platform_team_id
+                      ? `https://football.fantasysports.yahoo.com/f1/${league.platform_league_id}/${myTeam.platform_team_id.split('.').pop()}`
+                      : null
+              const CardHeadTag = teamUrl ? 'a' : 'div'
+
               return (
-                <article className="ld-team-card" key={league.id}>
-                  <div className="ld-card-head">
-                    <span className="ld-card-name">{league.name}</span>
-                  </div>
-                  <p className="ld-status">Could not find your team in this league.</p>
+                <article className="ld-team-card ld-mine" key={league.id} id={`league-card-${league.id}`}>
+                  <CardHeadTag
+                    className="ld-card-head"
+                    {...(teamUrl ? { href: teamUrl, target: '_blank', rel: 'noopener noreferrer' } : {})}
+                  >
+                    <span className="ld-card-name">
+                      {myTeam.name} — {league.name}
+                      {myTeam.week != null ? ` (week ${myTeam.week})` : ''}
+                    </span>
+                    <span className="ld-card-score">
+                      {myTeam.points_for} – {myTeam.opponent_points ?? '-'}
+                      {myTeam.opponent_name ? ` vs ${myTeam.opponent_name}` : ''}
+                    </span>
+                  </CardHeadTag>
+                  <LineupSection title="Starting lineup" defaultOpen>
+                    <RosterList players={starters} />
+                  </LineupSection>
+                  <LineupSection title={`Bench (${bench.length})`} defaultOpen={false} collapsible>
+                    <RosterList players={bench} />
+                  </LineupSection>
+                  {league.platform === 'sleeper' && (
+                    <LineupSection
+                      title={`Waiver wire${waiverWire[league.id] ? ` (${Math.min(waiverWire[league.id].length, 10)})` : ''}`}
+                      defaultOpen={false}
+                      collapsible
+                    >
+                      {waiverWire[league.id] === undefined ? (
+                        <p className="ld-status">Loading…</p>
+                      ) : waiverWire[league.id].length === 0 ? (
+                        <p className="ld-status">No trending players available right now.</p>
+                      ) : (
+                        /* Display cap: the backend returns up to 25 trending adds
+                           and typically 10-18 survive the rostered filter, which
+                           would make this the tallest section on the card. Purely
+                           a display concern — the response shape is unchanged. */
+                        waiverWire[league.id].slice(0, 10).map((player) => {
+                          const pts = formatPoints(player.actual_points, player.projected_points)
+                          const isLive = player.actual_points != null
+                          return (
+                            <div className={`ld-waiver-row${isLive ? ' ld-live' : ''}`} key={player.player_id}>
+                              <span className="ld-dot" />
+                              <span className="ld-pos">{player.position}</span>
+                              <span className="ld-nm">{player.name}</span>
+                              <span className="ld-tm">{player.team}</span>
+                              <span className="ld-pts">{pts || ' '}</span>
+                              <span className="ld-trend">{player.trend_count}</span>
+                            </div>
+                          )
+                        })
+                      )}
+                    </LineupSection>
+                  )}
                 </article>
               )
-            }
-
-            const starters = byPositionOrder(myTeam.roster.filter((p) => p.is_starter))
-            const bench = byPositionOrder(myTeam.roster.filter((p) => !p.is_starter))
-
-            // Sleeper's web app resolves "/team" to the logged-in user's own
-            // team within that league — no roster_id needed. ESPN has no such
-            // shorthand: its team page URL requires the numeric team ID
-            // alongside the league ID, which is exactly what platform_team_id
-            // already stores for ESPN leagues.
-            const teamUrl =
-              league.platform === 'sleeper' && league.platform_league_id
-                ? `https://sleeper.com/leagues/${league.platform_league_id}/team`
-                : league.platform === 'espn' && league.platform_league_id && myTeam.platform_team_id
-                  ? `https://fantasy.espn.com/football/team?leagueId=${league.platform_league_id}&teamId=${myTeam.platform_team_id}`
-                  : league.platform === 'yahoo' && league.platform_league_id && myTeam.platform_team_id
-                    ? `https://football.fantasysports.yahoo.com/f1/${league.platform_league_id}/${myTeam.platform_team_id.split('.').pop()}`
-                    : null
-            const CardHeadTag = teamUrl ? 'a' : 'div'
-
-            return (
-              <article className="ld-team-card ld-mine" key={league.id}>
-                <CardHeadTag
-                  className="ld-card-head"
-                  {...(teamUrl ? { href: teamUrl, target: '_blank', rel: 'noopener noreferrer' } : {})}
-                >
-                  <span className="ld-card-name">
-                    {myTeam.name} — {league.name}
-                    {myTeam.week != null ? ` (week ${myTeam.week})` : ''}
-                  </span>
-                  <span className="ld-card-score">
-                    {myTeam.points_for} – {myTeam.opponent_points ?? '-'}
-                    {myTeam.opponent_name ? ` vs ${myTeam.opponent_name}` : ''}
-                  </span>
-                </CardHeadTag>
-                <div className="ld-lineup-section">
-                  <h3 className="ld-lineup-label">Starting lineup</h3>
-                  <RosterList players={starters} />
-                </div>
-                <div className="ld-lineup-section ld-bench">
-                  <h3 className="ld-lineup-label">Bench</h3>
-                  <RosterList players={bench} />
-                </div>
-                {league.platform === 'sleeper' && (
-                <div className="ld-lineup-section">
-                  <h3 className="ld-lineup-label">Waiver wire</h3>
-                  {waiverWire[league.id] === undefined ? (
-                    <p className="ld-status">Loading…</p>
-                  ) : waiverWire[league.id].length === 0 ? (
-                    <p className="ld-status">No trending players available right now.</p>
-                  ) : (
-                    /* Display cap: the backend returns up to 25 trending adds
-                       and typically 10-18 survive the rostered filter, which
-                       would make this the tallest section on the card. Purely
-                       a display concern — the response shape is unchanged. */
-                    waiverWire[league.id].slice(0, 10).map((player) => {
-                      const pts = formatPoints(player.actual_points, player.projected_points)
-                      return (
-                        <div className="ld-waiver-row" key={player.player_id}>
-                          <span className="ld-pos">{player.position}</span>
-                          <span className="ld-nm">{player.name}</span>
-                          <span className="ld-tm">{player.team}</span>
-                          <span className="ld-pts">{pts || ' '}</span>
-                          <span className="ld-trend">{player.trend_count}</span>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-                )}
-              </article>
-            )
-          })}
+            })}
+          </div>
         </div>
+        <LiveGamesRail games={liveGames} />
       </div>
     </div>
   )

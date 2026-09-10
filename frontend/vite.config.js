@@ -8,7 +8,7 @@ import tailwindcss from '@tailwindcss/vite'
 //
 // The /settings carve-out matters: the SPA owns the client-side route /settings
 // while the API owns /settings/<resource>, so only sub-paths are proxied.
-const API_ROUTES = '^(/auth|/leagues|/sync-status|/health)(/|$)|^/settings/.+'
+const API_ROUTES = '^(/auth|/leagues|/sync-status|/nfl-scores|/health)(/|$)|^/settings/.+'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

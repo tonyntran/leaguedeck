@@ -20,6 +20,17 @@ button {
   font-family: var(--ld-font);
 }
 
+/* The scoreboard strip links jump to a card further down the page --
+   smooth by default, instant for anyone who's asked for reduced motion. */
+html {
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
 .ld-page {
   background: var(--ld-paper);
   color: var(--ld-ink);
@@ -210,8 +221,68 @@ button {
   color: var(--ld-muted);
 }
 
-.ld-leagues {
+/* Cards + live-games rail side by side; the rail carries its own right
+   edge so this container's padding only needs the left side plus bottom
+   breathing room. */
+.ld-dash-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.2rem;
   padding: 0 1.7rem 2rem;
+}
+.ld-leagues {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Scoreboard summary strip: a quick score check across every league
+   without scrolling through full cards below. Links to the matching card
+   by id rather than JS, so it works even before React re-renders anything. */
+.ld-scorestrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.7rem;
+  padding: 0 1.7rem;
+  margin: 0.6rem 0 0;
+}
+.ld-score-chip {
+  background: var(--ld-tc-card);
+  border: 1px solid var(--ld-tc-border);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  color: inherit;
+  text-decoration: none;
+}
+.ld-score-chip .ld-chip-name {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ld-score-chip .ld-chip-league {
+  display: block;
+  font-size: 0.66rem;
+  color: var(--ld-tc-tm);
+  font-style: italic;
+}
+.ld-score-chip .ld-chip-score {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--ld-tc-mine);
+  flex-shrink: 0;
+  text-align: right;
+}
+.ld-score-chip .ld-chip-vs {
+  display: block;
+  font-size: 0.64rem;
+  font-weight: 400;
+  color: var(--ld-tc-tm);
 }
 
 /* Dashboard team card ("Trading Card Wall"). Separate token namespace from
@@ -238,6 +309,73 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(320px, 420px));
   gap: 0.9rem;
   margin-top: 0.6rem;
+}
+
+/* Live-games rail: a narrow sidebar of only the games your rostered players
+   are actually in, so it stays short and scannable next to the card wall. */
+.ld-live-rail {
+  width: 260px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 1rem;
+  margin-top: 0.6rem;
+  background: var(--ld-tc-card);
+  border: 1px solid var(--ld-tc-border);
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.ld-live-rail-title {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  color: var(--ld-tc-ink);
+}
+.ld-live-empty {
+  padding: 0;
+  font-size: 0.8rem;
+}
+.ld-live-game + .ld-live-game {
+  border-top: 1px solid var(--ld-tc-border);
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+}
+.ld-live-score {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--ld-tc-ink);
+}
+.ld-live-at {
+  font-weight: 400;
+  color: var(--ld-tc-tm);
+}
+.ld-live-detail {
+  margin: 0.15rem 0 0.4rem;
+  font-size: 0.7rem;
+  font-style: italic;
+  color: var(--ld-tc-mine);
+}
+.ld-live-player {
+  margin: 0.2rem 0;
+  font-size: 0.78rem;
+  color: var(--ld-tc-ink);
+}
+.ld-live-player-meta {
+  font-size: 0.68rem;
+  color: var(--ld-tc-tm);
+}
+
+@media (max-width: 900px) {
+  .ld-dash-layout {
+    flex-direction: column;
+  }
+  .ld-live-rail {
+    width: auto;
+    position: static;
+  }
 }
 .ld-team-card {
   background: var(--ld-tc-card);
@@ -277,15 +415,60 @@ a.ld-card-head:hover {
 .ld-lineup-section + .ld-lineup-section {
   border-top: 1px solid var(--ld-tc-border);
 }
-.ld-lineup-section.ld-bench {
-  opacity: 0.75;
-}
 .ld-lineup-label {
   font-size: 0.68rem;
   font-weight: 700;
   color: var(--ld-tc-pos);
   margin: 0 0 0.35rem;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+/* Collapsible section headers (Bench, Waiver wire) -- Starting lineup is
+   never collapsible, so it never gets this class. */
+.ld-lineup-label.ld-collapsible {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  user-select: none;
+}
+.ld-lineup-label .ld-chevron {
+  font-size: 0.6rem;
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.ld-lineup-label.ld-closed .ld-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Live/not-yet-played status per player row -- a green dot and full-weight
+   name/score once a player has an actual score; everyone else stays
+   quieter, so the eye lands on what's already happened first. */
+.ld-roster-row .ld-dot,
+.ld-waiver-row .ld-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid var(--ld-tc-border);
+  background: transparent;
+}
+.ld-roster-row.ld-live .ld-dot,
+.ld-waiver-row.ld-live .ld-dot {
+  background: #3f7a4f;
+  border-color: #3f7a4f;
+  box-shadow: 0 0 0 3px rgba(63, 122, 79, 0.18);
+}
+.ld-roster-row:not(.ld-live) .ld-nm,
+.ld-waiver-row:not(.ld-live) .ld-nm {
+  opacity: 0.7;
+}
+.ld-roster-row.ld-live .ld-nm,
+.ld-waiver-row.ld-live .ld-nm {
+  font-weight: 600;
+}
+.ld-roster-row.ld-live .ld-pts,
+.ld-waiver-row.ld-live .ld-pts {
+  color: var(--ld-tc-mine);
 }
 .ld-roster-row {
   display: flex;

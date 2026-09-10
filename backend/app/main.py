@@ -7,6 +7,7 @@ from app.config import get_settings
 from app.db import init_db
 from app.routers import auth as auth_router
 from app.routers import leagues as leagues_router
+from app.routers import live_scores as live_scores_router
 from app.routers import settings as settings_router
 from app.sync import sync_all_platforms, sync_all_platforms_during_live_window
 
@@ -52,6 +53,7 @@ app.include_router(auth_router.router)
 app.include_router(settings_router.router)
 app.include_router(leagues_router.router)
 app.include_router(leagues_router.sync_status_router)
+app.include_router(live_scores_router.router)
 
 
 @app.get("/health")
